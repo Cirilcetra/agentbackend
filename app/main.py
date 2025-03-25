@@ -6,10 +6,14 @@ import logging
 import os
 import json
 import uuid
+from dotenv import load_dotenv
 from app import models
 from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
 from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
 from app.routes import chatbot, profiles, admin
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -22,15 +26,20 @@ logging.basicConfig(
 )
 
 # Create the FastAPI app
-app = FastAPI()
+app = FastAPI(
+    title="AI Agent Backend",
+    description="Backend API for AI Agent chatbot and profile management",
+    version="1.0.0"
+)
 
 # Add CORS middleware
+allowed_origins = os.getenv("FRONTEND_URL", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=allowed_origins if "*" not in allowed_origins else ["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include routers from the routes directory
