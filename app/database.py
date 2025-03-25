@@ -57,13 +57,29 @@ def get_profile_data(user_id=None):
     try:
         db_profile = None
         if supabase:
-            # For now, since we don't have a user_id column in the database,
-            # return the first profile regardless of user_id
-            response = supabase.table("profiles").select("*").limit(1).execute()
-            
-            if response.data and len(response.data) > 0:
-                print(f"Found profile: {response.data[0].get('id')}")
-                db_profile = response.data[0]
+            if user_id:
+                # Try to find a profile with the matching user_id
+                response = supabase.table("profiles").select("*").eq("user_id", user_id).limit(1).execute()
+                
+                if response.data and len(response.data) > 0:
+                    print(f"Found profile for user_id {user_id}: {response.data[0].get('id')}")
+                    db_profile = response.data[0]
+                else:
+                    print(f"No profile found for user_id {user_id}, will create one")
+                    # Create a new profile for this user
+                    new_profile = DEFAULT_PROFILE.copy()
+                    new_profile['user_id'] = user_id
+                    inserted = supabase.table("profiles").insert(new_profile).execute()
+                    if inserted.data and len(inserted.data) > 0:
+                        print(f"Created new profile for user_id {user_id}: {inserted.data[0].get('id')}")
+                        db_profile = inserted.data[0]
+            else:
+                # For backward compatibility, return the first profile if no user_id is specified
+                response = supabase.table("profiles").select("*").limit(1).execute()
+                
+                if response.data and len(response.data) > 0:
+                    print(f"Found profile: {response.data[0].get('id')}")
+                    db_profile = response.data[0]
         
         # Merge the database profile with the in-memory profile
         # This ensures we have all fields available even if they're not in the database
@@ -91,11 +107,16 @@ def get_profile_data(user_id=None):
         if not result:
             print("Using in-memory profile")
             result = in_memory_profile.copy()
+            if user_id:
+                result['user_id'] = user_id
         
         return result
     except Exception as e:
         print(f"Error fetching profile data: {e}")
-        return in_memory_profile.copy()
+        default_profile = in_memory_profile.copy()
+        if user_id:
+            default_profile['user_id'] = user_id
+        return default_profile
 
 def save_profile_to_file():
     """Save the in-memory profile to a file for persistence"""
@@ -289,173 +310,134 @@ def delete_project(project_id, user_id=None):
 
 def log_chat_message(message, sender, response=None, visitor_id=None, visitor_name=None, target_user_id=None):
     """
-    Log a chat message to Supabase or in-memory storage
+    Log a chat message to the database
+    Params:
+        message: the message to log
+        sender: who sent the message (e.g., "user", "assistant")
+        response: optional response to the message
+        visitor_id: unique identifier for the visitor/chat session
+        visitor_name: optional name for the visitor
+        target_user_id: optional target user ID for user-specific chatbots
     """
     try:
-        # Generate a UUID for the message
-        message_id = str(uuid.uuid4())
+        timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         
-        # Create message data with all required fields
-        data = {
-            "id": message_id,
+        # Create message data
+        message_data = {
+            "id": str(uuid.uuid4()),
             "message": message,
             "sender": sender,
             "response": response,
-            "visitor_id": visitor_id or "anonymous",  # Ensure visitor_id is never None
-            "visitor_name": visitor_name,
-            "target_user_id": target_user_id,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": timestamp,
         }
         
-        print(f"Logging chat message for visitor: {visitor_id}, name: {visitor_name}, target user: {target_user_id}")
+        # Add visitor ID if provided
+        if visitor_id:
+            message_data["visitor_id"] = visitor_id
+            
+        # Add visitor name if provided
+        if visitor_name:
+            message_data["visitor_name"] = visitor_name
+            
+        # Add target user ID if provided
+        if target_user_id:
+            message_data["target_user_id"] = target_user_id
+            
+        saved_messages = []
         
         if supabase:
-            # Log the data being sent to Supabase for debugging
-            print(f"Sending to Supabase: {data}")
-            
             try:
-                # Try to insert the message using a more robust approach
-                cleaned_data = {
-                    # Include only fields that are likely in the Supabase schema
-                    "id": message_id,
-                    "message": message,
-                    "sender": sender,
-                    "response": response,
-                    "visitor_id": visitor_id or "anonymous",
-                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-                }
+                # Store in Supabase
+                print(f"Storing chat message in Supabase. Visitor: {visitor_id}, Target User: {target_user_id}")
+                # Use the messages table (or chat_history)
+                insert_response = supabase.table("chat_history").insert(message_data).execute()
                 
-                # Only add optional fields if they have values
-                if visitor_name:
-                    cleaned_data["visitor_name"] = visitor_name
-                if target_user_id:
-                    cleaned_data["target_user_id"] = target_user_id
-                
-                response = supabase.table("messages").insert(cleaned_data).execute()
-                
-                if response.data:
-                    print(f"Successfully logged message to Supabase. Response: {response.data}")
-                    return response.data
+                if insert_response.data:
+                    print(f"Successfully saved chat message to Supabase: {insert_response.data[0].get('id')}")
+                    saved_messages = insert_response.data
                 else:
-                    print(f"No data returned from Supabase insert. Response: {response}")
-                    print("Falling back to in-memory storage")
-            except Exception as supabase_error:
-                print(f"Supabase insert error: {supabase_error}")
-                print("Falling back to in-memory storage due to Supabase error")
+                    print("Failed to save chat message to Supabase, falling back to in-memory storage")
+                    in_memory_messages.append(message_data)
+                    saved_messages = [message_data]
+            except Exception as db_error:
+                print(f"Error saving to Supabase: {db_error}")
+                print("Falling back to in-memory storage")
+                in_memory_messages.append(message_data)
+                saved_messages = [message_data]
         else:
-            print("Supabase client not available, using in-memory storage")
-        
-        # Add to in-memory storage if Supabase fails or is not available
-        message_with_id = {**data, "id": message_id}
-        in_memory_messages.append(message_with_id)
-        print(f"Added message to in-memory storage with ID: {message_id}")
-        
-        # Debug: Print how many messages are in in-memory storage
-        print(f"Total messages in in-memory storage: {len(in_memory_messages)}")
-        
-        return [message_with_id]
+            # Store in-memory
+            print("Supabase not available, storing chat message in-memory")
+            in_memory_messages.append(message_data)
+            saved_messages = [message_data]
+            
+        return saved_messages
     except Exception as e:
         print(f"Error logging chat message: {e}")
+        # Best effort: Try to save to in-memory storage anyway
         try:
-            # Try to add to in-memory storage as fallback
-            message_id = str(uuid.uuid4())
-            message_with_id = {
-                "id": message_id,
+            message_data = {
+                "id": str(uuid.uuid4()),
                 "message": message,
                 "sender": sender,
                 "response": response,
-                "visitor_id": visitor_id or "anonymous",
+                "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                "visitor_id": visitor_id,
                 "visitor_name": visitor_name,
-                "target_user_id": target_user_id,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                "target_user_id": target_user_id
             }
-            in_memory_messages.append(message_with_id)
-            print(f"Added message to in-memory storage after error with ID: {message_id}")
-            return [message_with_id]
-        except Exception as fallback_error:
-            print(f"Error in fallback storage: {fallback_error}")
+            in_memory_messages.append(message_data)
+            return [message_data]
+        except:
             return None
 
 def get_chat_history(limit=50, visitor_id=None, target_user_id=None):
     """
-    Get chat history from Supabase or in-memory storage
-    Can filter by visitor_id and/or target_user_id
+    Get the chat history from Supabase or in-memory storage
+    Params:
+        limit: Maximum number of messages to return
+        visitor_id: If provided, filter by visitor_id
+        target_user_id: If provided, filter by target_user_id (the user whose profile was used for the responses)
     """
     try:
-        print(f"Getting chat history, limit: {limit}, visitor_id: {visitor_id}, target_user_id: {target_user_id}")
-        
-        # Initialize result array
-        result_messages = []
-        
         if supabase:
-            try:
-                query = supabase.table("messages").select("*").order("timestamp", desc=True)
-                
-                # Filter by visitor ID if provided
-                if visitor_id:
-                    print(f"Filtering chat history for visitor: {visitor_id}")
-                    query = query.eq("visitor_id", visitor_id)
-                
-                # Filter by target user ID if provided
-                if target_user_id:
-                    print(f"Filtering chat history for target user: {target_user_id}")
-                    query = query.eq("target_user_id", target_user_id)
-                
-                response = query.limit(limit).execute()
-                
-                if response.data:
-                    print(f"Retrieved {len(response.data)} messages from Supabase")
-                    # DEBUG: Print first message to verify visitor_id is present
-                    if response.data and len(response.data) > 0:
-                        print(f"First message visitor_id: {response.data[0].get('visitor_id', 'MISSING')}")
-                    
-                    # Add Supabase messages to result
-                    result_messages.extend(response.data)
-                else:
-                    print("No chat history found in Supabase")
-            except Exception as supabase_error:
-                print(f"Error retrieving chat history from Supabase: {supabase_error}")
-                print("Falling back to in-memory storage only")
-        else:
-            print("Supabase client not available, using in-memory storage only")
-        
-        # Add in-memory messages to the result (fallback or complementary)
-        if in_memory_messages:
-            print(f"Found {len(in_memory_messages)} messages in in-memory storage")
-            
-            # Filter in-memory messages
-            filtered_messages = in_memory_messages
+            # Start building the query
+            query = supabase.table("chat_history").select("*").order('timestamp', desc=True)
             
             # Apply filters if provided
             if visitor_id:
-                filtered_messages = [msg for msg in filtered_messages if msg.get("visitor_id") == visitor_id]
-                print(f"Filtered in-memory messages for visitor {visitor_id}: found {len(filtered_messages)} messages")
+                query = query.eq("visitor_id", visitor_id)
+                
+            # Only add target_user_id filter if it's provided and not None/empty
+            if target_user_id:
+                print(f"Filtering chat history by target_user_id: {target_user_id}")
+                query = query.eq("target_user_id", target_user_id)
             
+            # Add limit and execute
+            response = query.limit(limit).execute()
+            
+            if response.data:
+                print(f"Found {len(response.data)} chat history items in database")
+                return response.data
+            
+        # Fallback to in-memory storage if Supabase returns no data or isn't available
+        if visitor_id or target_user_id:
+            filtered_messages = in_memory_messages.copy()
+            
+            if visitor_id:
+                filtered_messages = [msg for msg in filtered_messages if msg.get("visitor_id") == visitor_id]
+                
             if target_user_id:
                 filtered_messages = [msg for msg in filtered_messages if msg.get("target_user_id") == target_user_id]
-                print(f"Filtered in-memory messages for target user {target_user_id}: found {len(filtered_messages)} messages")
-            
-            # Add in-memory messages to result
-            result_messages.extend(filtered_messages)
-            
-            # Debug: Print some information about the in-memory messages
-            if filtered_messages:
-                print(f"First in-memory message: {filtered_messages[0]}")
-        
-        # Sort by timestamp
-        sorted_messages = sorted(
-            result_messages, 
-            key=lambda x: x.get("timestamp", ""), 
-            reverse=True
-        )
-        
-        # Limit the number of messages returned
-        limited_messages = sorted_messages[:limit]
-        
-        print(f"Returning {len(limited_messages)} total messages (combined from Supabase and in-memory)")
-        return limited_messages
+                
+            # Sort by timestamp (newest first) and apply limit
+            filtered_messages.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            return filtered_messages[:limit]
+        else:
+            # Sort by timestamp (newest first) and apply limit
+            sorted_messages = sorted(in_memory_messages, key=lambda x: x.get("timestamp", ""), reverse=True)
+            return sorted_messages[:limit]
     except Exception as e:
-        print(f"Error getting chat history: {e}")
+        print(f"Error fetching chat history: {e}")
         return []
 
 def verify_admin_login(username, password):

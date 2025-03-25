@@ -1,183 +1,44 @@
-import os
-import sys
-import logging
-import json
-from pathlib import Path
-
-# Configure basic logging first
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Load environment variables aggressively before any other imports
-def load_dotenv_from_all_sources():
-    """Load environment variables from all possible sources"""
-    try:
-        # Try to load from various dotenv files
-        for env_file in ['.env', '.env.production', '.env.railway']:
-            path = Path(env_file)
-            if path.exists():
-                logger.info(f"Loading environment variables from {env_file}")
-                with open(env_file, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith('#'):
-                            continue
-                        try:
-                            key, value = line.split('=', 1)
-                            # Only set if not already in environment
-                            if key not in os.environ:
-                                os.environ[key] = value
-                                logger.info(f"Set environment variable from {env_file}: {key}")
-                        except ValueError:
-                            continue
-        
-        # Try to load from JSON
-        json_file = '.railway.secrets.json'
-        if Path(json_file).exists():
-            logger.info(f"Loading environment variables from {json_file}")
-            try:
-                with open(json_file, 'r') as f:
-                    data = json.load(f)
-                    # Skip placeholder or template entries
-                    if '_README' in data:
-                        logger.info(f"Found placeholder .railway.secrets.json file - skipping")
-                    else:
-                        for key, value in data.items():
-                            # Skip template values
-                            if 'your-' in str(value) or 'here' in str(value):
-                                logger.info(f"Skipping template value for {key}")
-                                continue
-                                
-                            # Only set if not already in environment
-                            if key not in os.environ:
-                                os.environ[key] = str(value)
-                                logger.info(f"Set environment variable from JSON: {key}")
-            except json.JSONDecodeError:
-                logger.warning(f"Could not parse {json_file} as JSON")
-        
-        # Log the environment variables we found
-        logger.info("Environment variable check results:")
-        for key in ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "DATABASE_URL"]:
-            if key in os.environ and os.environ[key] and not 'your-' in os.environ[key]:
-                # Mask the values for security
-                value = os.environ[key]
-                if len(value) > 8:
-                    masked = value[:4] + "..." + value[-4:]
-                else:
-                    masked = "****"
-                logger.info(f"✓ {key}: {masked}")
-            else:
-                logger.warning(f"✗ {key}: Not set")
-        
-        # Check if Railway environment variables are present
-        if os.environ.get("RAILWAY_ENVIRONMENT"):
-            logger.info("Running in Railway environment, expecting environment variables to be set in Railway dashboard")
-    
-    except Exception as e:
-        logger.error(f"Error loading environment variables: {e}")
-
-# Load environment variables before other imports
-load_dotenv_from_all_sources()
-
-# Now import the rest
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+import logging
+import os
+import json
 import uuid
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+from app import models
+from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
+from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
+from app.routes import chatbot, profiles, admin
 
 # Configure logging
-try:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler()  # Always output to stdout for Railway
-        ]
-    )
-    
-    # Only attempt to write to log file if not in Railway environment
-    if not os.getenv("RAILWAY_ENVIRONMENT"):
-        try:
-            logging.getLogger().addHandler(logging.FileHandler("backend.log"))
-            logging.info("Added file handler for logging")
-        except Exception as e:
-            logging.warning(f"Could not set up file logging: {e}")
-except Exception as e:
-    print(f"Warning: Could not configure logging: {e}")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("backend.log"),
+        logging.StreamHandler()
+    ]
+)
 
 # Create the FastAPI app
-app = FastAPI(
-    title="AI Agent Backend",
-    description="Backend API for AI Agent chatbot and profile management",
-    version="1.0.0"
-)
+app = FastAPI()
 
 # Add CORS middleware
-allowed_origins = os.getenv("FRONTEND_URL", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins if "*" not in allowed_origins else ["*"],
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
-# Import modules with error handling
-try:
-    from app import models
-    from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
-    logging.info("Database modules imported successfully")
-except Exception as e:
-    logging.error(f"Error importing database modules: {e}")
-    # Create stub functions to prevent app from crashing if database fails
-    def get_profile_data(*args, **kwargs): 
-        return {"bio": "Demo mode - database connection failed", "id": "demo"}
-    def update_profile_data(*args, **kwargs): return {}
-    def log_chat_message(*args, **kwargs): return [{"id": "demo"}]
-    def get_chat_history(*args, **kwargs): return []
-    # Create minimal models module if needed
-    import types
-    models = types.SimpleNamespace()
-    models.ChatRequest = BaseModel
-    models.ChatHistoryItem = BaseModel
-    models.ChatHistoryResponse = BaseModel
+# Include routers from the routes directory
+app.include_router(chatbot.router, prefix="/chat", tags=["chatbot"])
+app.include_router(profiles.router, prefix="/profile", tags=["profiles"])
+app.include_router(admin.router, prefix="/admin", tags=["admin"])
 
-try:
-    from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
-    logging.info("Embeddings modules imported successfully")
-except Exception as e:
-    logging.error(f"Error importing embeddings modules: {e}")
-    # Create stub functions for AI functionality
-    def add_profile_to_vector_db(*args, **kwargs): return True
-    def query_vector_db(*args, **kwargs): return {"documents": [], "metadatas": [], "distances": []}
-    def generate_ai_response(*args, **kwargs): 
-        return "AI services are currently in demo mode due to initialization errors. Please check the logs."
-    def add_conversation_to_vector_db(*args, **kwargs): return True
-
-# Try importing routes, but app can run without them
-try:
-    from app.routes import chatbot, profiles, admin
-    # Include routers from the routes directory
-    app.include_router(chatbot.router, prefix="/chat", tags=["chatbot"])
-    app.include_router(profiles.router, prefix="/profile", tags=["profiles"])
-    app.include_router(admin.router, prefix="/admin", tags=["admin"])
-    logging.info("Route modules imported and registered successfully")
-except Exception as e:
-    logging.error(f"Error loading route modules: {e}")
-    logging.warning("Running with limited API endpoints (core endpoints only)")
-
-# Define models (moved below other imports)
+# Define models
 class ProfileData(BaseModel):
     bio: Optional[str] = None
     skills: Optional[str] = None
@@ -200,28 +61,15 @@ class ChatRequest(BaseModel):
 # Root endpoint
 @app.get("/")
 async def root():
-    """
-    Root endpoint for health checks
-    This is used by Railway to verify the application is running
-    """
-    # Simple, fast response that doesn't depend on any external services
-    config = {
-        "status": "healthy",
-        "service": "AI Agent Backend",
-        "version": "1.0.0",
-        "environment": "production" if os.getenv("RAILWAY_ENVIRONMENT") else "development",
-        "openai_configured": os.getenv("OPENAI_API_KEY") is not None,
-        "supabase_configured": os.getenv("SUPABASE_URL") is not None and os.getenv("SUPABASE_KEY") is not None
-    }
-    return config
+    return {"message": "Welcome to the AIChat API"}
 
 # Get profile data - kept for backward compatibility
 @app.get("/profile")
 async def profile(user_id: Optional[str] = None):
     """Get profile data"""
     try:
-        logging.info(f"Getting profile data")
-        profile_data = get_profile_data()
+        logging.info(f"Getting profile data for user_id: {user_id}")
+        profile_data = get_profile_data(user_id=user_id)
         return profile_data
     except Exception as e:
         logging.error(f"Error getting profile data: {e}")
@@ -243,16 +91,20 @@ async def update_profile_put(profile_data: ProfileData, user_id: Optional[str] =
 async def update_profile_handler(profile_data: ProfileData, user_id: Optional[str] = None):
     """Shared handler for profile updates"""
     try:
-        logging.info(f"Updating profile data")
+        logging.info(f"Updating profile data for user_id: {user_id}")
         
         # Convert Pydantic model to dict
         profile_dict = profile_data.dict()
         
+        # Ensure user_id is included in the data if provided
+        if user_id and 'user_id' not in profile_dict:
+            profile_dict['user_id'] = user_id
+        
         # Update profile data in the database
-        updated_profile = update_profile_data(profile_dict)
+        updated_profile = update_profile_data(profile_dict, user_id=user_id)
         
         # Add profile data to vector database
-        add_profile_to_vector_db(updated_profile)
+        add_profile_to_vector_db(updated_profile, user_id=user_id)
         
         return {"message": "Profile updated successfully", "profile": updated_profile}
     except Exception as e:
@@ -282,9 +134,9 @@ async def chat(chat_request: models.ChatRequest):
         
         logging.info(f"User message: {message[:50]}...")
         
-        # Get profile data
-        profile_data = get_profile_data()
-        logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}") 
+        # Get profile data for the specific user_id if provided
+        profile_data = get_profile_data(user_id=target_user_id)
+        logging.info(f"Retrieved profile data for user: {target_user_id or 'default'}, profile ID: {profile_data.get('id', 'No ID')}")
         
         # Query vector database for relevant information including conversation history
         logging.info(f"Querying vector DB for relevant context and conversation history")
@@ -292,11 +144,12 @@ async def chat(chat_request: models.ChatRequest):
             query=message, 
             n_results=3,
             visitor_id=visitor_id,
+            user_id=target_user_id,  # Pass the target user ID to search their data specifically
             include_conversation=True
         )
         
         # Get sequential conversation history for UI/display context
-        logging.info(f"Getting sequential conversation history for visitor: {visitor_id}")
+        logging.info(f"Getting sequential conversation history for visitor: {visitor_id}, target user: {target_user_id or 'default'}")
         history_limit = 10  # Get last 10 messages (5 exchanges)
         chat_history = get_chat_history(
             limit=history_limit,

@@ -63,7 +63,7 @@ class ProfileData(BaseModel):
     Model for profile data
     """
     id: Optional[str] = None
-    user_id: Optional[str] = None
+    user_id: Optional[str] = Field(None, description="ID of the authenticated user who owns this profile")
     name: Optional[str] = Field(None, description="User's name")
     location: Optional[str] = Field(None, description="User's location")
     bio: str

@@ -17,6 +17,7 @@ async def get_profile(user_id: Optional[str] = Query(None, description="Specific
     Otherwise, return the default profile
     """
     try:
+        print(f"Getting profile for user_id: {user_id}")
         profile_data = get_profile_data(user_id=user_id)
         if not profile_data:
             # Return a default profile if none exists
@@ -25,7 +26,8 @@ async def get_profile(user_id: Optional[str] = Query(None, description="Specific
                 skills="No skills listed yet.",
                 experience="No experience listed yet.",
                 projects="No projects listed yet.",
-                interests="No interests listed yet."
+                interests="No interests listed yet.",
+                user_id=user_id
             )
         return models.ProfileData(**profile_data)
     
@@ -50,6 +52,9 @@ async def update_profile(
         
         # Add/update timestamp for updating
         data_dict["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Ensure the user_id is set to the authenticated user's ID
+        data_dict["user_id"] = user.id
         
         # Update in database with the authenticated user's ID
         print(f"Updating profile for user {user.id} with data: {data_dict}")

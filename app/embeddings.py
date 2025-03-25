@@ -158,11 +158,11 @@ except Exception as e:
 def add_profile_to_vector_db(profile_data, user_id=None):
     """
     Add profile data to the vector database
-    Note: user_id param is kept for compatibility but we use a single collection for now
+    Now supports user_id to maintain separate collections for different users
     """
     try:
-        # For simplicity, we'll use a single collection for all profiles
-        collection_name = "portfolio_data"
+        # If user_id is provided, use it in the collection name
+        collection_name = f"portfolio_data_{user_id}" if user_id else "portfolio_data"
         print(f"Using collection name: {collection_name}")
         
         # Create or get the appropriate collection
@@ -183,47 +183,66 @@ def add_profile_to_vector_db(profile_data, user_id=None):
         metadatas = []
         ids = []
         
+        # Store user_id in metadata if available
+        base_metadata = {"category": "profile"}
+        if user_id:
+            base_metadata["user_id"] = user_id
+        
         # Add name
         if profile_data.get("name"):
             documents.append(profile_data["name"])
-            metadatas.append({"category": "profile", "subcategory": "name"})
-            ids.append("name")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "name"
+            metadatas.append(metadata)
+            ids.append(f"name_{user_id}" if user_id else "name")
         
         # Add location
         if profile_data.get("location"):
             documents.append(profile_data["location"])
-            metadatas.append({"category": "profile", "subcategory": "location"})
-            ids.append("location")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "location"
+            metadatas.append(metadata)
+            ids.append(f"location_{user_id}" if user_id else "location")
         
         # Add bio
         if profile_data.get("bio"):
             documents.append(profile_data["bio"])
-            metadatas.append({"category": "profile", "subcategory": "bio"})
-            ids.append("bio")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "bio"
+            metadatas.append(metadata)
+            ids.append(f"bio_{user_id}" if user_id else "bio")
         
         # Add skills
         if profile_data.get("skills"):
             documents.append(profile_data["skills"])
-            metadatas.append({"category": "profile", "subcategory": "skills"})
-            ids.append("skills")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "skills"
+            metadatas.append(metadata)
+            ids.append(f"skills_{user_id}" if user_id else "skills")
         
         # Add experience
         if profile_data.get("experience"):
             documents.append(profile_data["experience"])
-            metadatas.append({"category": "profile", "subcategory": "experience"})
-            ids.append("experience")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "experience"
+            metadatas.append(metadata)
+            ids.append(f"experience_{user_id}" if user_id else "experience")
         
         # Add legacy projects text if it exists
         if profile_data.get("projects"):
             documents.append(profile_data["projects"])
-            metadatas.append({"category": "profile", "subcategory": "projects"})
-            ids.append("projects")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "projects"
+            metadatas.append(metadata)
+            ids.append(f"projects_{user_id}" if user_id else "projects")
         
         # Add interests
         if profile_data.get("interests"):
             documents.append(profile_data["interests"])
-            metadatas.append({"category": "profile", "subcategory": "interests"})
-            ids.append("interests")
+            metadata = base_metadata.copy()
+            metadata["subcategory"] = "interests"
+            metadatas.append(metadata)
+            ids.append(f"interests_{user_id}" if user_id else "interests")
         
         # Add documents to collection
         if documents:
@@ -235,14 +254,14 @@ def add_profile_to_vector_db(profile_data, user_id=None):
             print(f"Successfully added {len(documents)} profile documents to vector database")
             
         # Now add projects from project_list if available
-        add_projects_to_vector_db(profile_data.get("project_list", []))
+        add_projects_to_vector_db(profile_data.get("project_list", []), user_id)
         
         return True
     except Exception as e:
         print(f"Error adding profile to vector database: {e}")
         return False
 
-def add_projects_to_vector_db(projects_list):
+def add_projects_to_vector_db(projects_list, user_id=None):
     """
     Add project items to the vector database
     """
@@ -251,8 +270,8 @@ def add_projects_to_vector_db(projects_list):
         return True
         
     try:
-        # Use the same collection for projects
-        collection_name = "portfolio_data"
+        # If user_id is provided, use it in the collection name
+        collection_name = f"portfolio_data_{user_id}" if user_id else "portfolio_data"
         print(f"Using collection name for projects: {collection_name}")
         
         # Create or get the appropriate collection
@@ -277,39 +296,39 @@ def add_projects_to_vector_db(projects_list):
             project_id = project.get("id")
             if not project_id:
                 continue
+            
+            # Base metadata with user_id if available
+            base_metadata = {
+                "category": "project",
+                "project_id": project_id,
+                "project_category": project.get("category", "")
+            }
+            if user_id:
+                base_metadata["user_id"] = user_id
                 
             # Add project title
             if project.get("title"):
                 documents.append(project["title"])
-                metadatas.append({
-                    "category": "project", 
-                    "subcategory": "title",
-                    "project_id": project_id,
-                    "project_category": project.get("category", "")
-                })
-                ids.append(f"project_title_{project_id}")
+                metadata = base_metadata.copy()
+                metadata["subcategory"] = "title"
+                metadatas.append(metadata)
+                ids.append(f"project_title_{project_id}_{user_id}" if user_id else f"project_title_{project_id}")
             
             # Add project description
             if project.get("description"):
                 documents.append(project["description"])
-                metadatas.append({
-                    "category": "project", 
-                    "subcategory": "description",
-                    "project_id": project_id,
-                    "project_category": project.get("category", "")
-                })
-                ids.append(f"project_description_{project_id}")
+                metadata = base_metadata.copy()
+                metadata["subcategory"] = "description"
+                metadatas.append(metadata)
+                ids.append(f"project_description_{project_id}_{user_id}" if user_id else f"project_description_{project_id}")
                 
             # Add project details
             if project.get("details"):
                 documents.append(project["details"])
-                metadatas.append({
-                    "category": "project", 
-                    "subcategory": "details",
-                    "project_id": project_id,
-                    "project_category": project.get("category", "")
-                })
-                ids.append(f"project_details_{project_id}")
+                metadata = base_metadata.copy()
+                metadata["subcategory"] = "details"
+                metadatas.append(metadata)
+                ids.append(f"project_details_{project_id}_{user_id}" if user_id else f"project_details_{project_id}")
                 
             # Add project content - supporting both Lexical and legacy content
             content_text = ""
@@ -357,25 +376,17 @@ def add_projects_to_vector_db(projects_list):
                     # Add each chunk as a separate document
                     for i, chunk in enumerate(chunks):
                         documents.append(chunk)
-                        metadatas.append({
-                            "category": "project", 
-                            "subcategory": "content",
-                            "chunk_index": i,
-                            "total_chunks": len(chunks),
-                            "project_id": project_id,
-                            "project_category": project.get("category", "")
-                        })
-                        ids.append(f"project_content_{project_id}_{i}")
+                        metadata = base_metadata.copy()
+                        metadata["chunk_index"] = i
+                        metadata["total_chunks"] = len(chunks)
+                        metadatas.append(metadata)
+                        ids.append(f"project_content_{project_id}_{i}_{user_id}" if user_id else f"project_content_{project_id}_{i}")
                 else:
                     # Add the whole content as one document
                     documents.append(content_text)
-                    metadatas.append({
-                        "category": "project", 
-                        "subcategory": "content",
-                        "project_id": project_id,
-                        "project_category": project.get("category", "")
-                    })
-                    ids.append(f"project_content_{project_id}")
+                    metadata = base_metadata.copy()
+                    metadatas.append(metadata)
+                    ids.append(f"project_content_{project_id}_{user_id}" if user_id else f"project_content_{project_id}")
         
         # Add documents to collection
         if documents:
@@ -391,41 +402,47 @@ def add_projects_to_vector_db(projects_list):
         print(f"Error adding projects to vector database: {e}")
         return False
 
-def add_conversation_to_vector_db(message, response, visitor_id, message_id=None):
+def add_conversation_to_vector_db(message, response, visitor_id, message_id=None, user_id=None):
     """
-    Add conversation exchange to the vector database for future context retrieval
+    Add a conversation to the vector database for future context
     """
     try:
-        # Use the portfolio collection for simplicity, but with different category
-        collection_name = "portfolio_data"
+        # Use user_id in collection name if provided
+        collection_name = f"conversation_{user_id}" if user_id else "conversation"
         print(f"Adding conversation to collection: {collection_name}")
         
-        # Create or get the appropriate collection
         collection = chroma_client.get_or_create_collection(
             name=collection_name,
             embedding_function=openai_ef
         )
         
-        # Generate a unique ID if not provided
-        if not message_id:
-            message_id = str(uuid.uuid4())
+        # Create a combined document for semantic searching
+        combined_text = f"User: {message}\nAI: {response}"
         
-        # Format the conversation as a complete exchange for context
-        conversation_text = f"User asked: {message}\nYou responded: {response}"
+        # Create metadata for the document
+        metadata = {
+            "type": "conversation",
+            "visitor_id": visitor_id,
+            "message": message,
+            "response": response,
+            "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        }
         
-        # Add to vector DB
+        # Add user_id to metadata if provided
+        if user_id:
+            metadata["user_id"] = user_id
+            
+        # Generate ID based on message_id or a new UUID
+        doc_id = f"conv_{message_id}" if message_id else f"conv_{str(uuid.uuid4())}"
+        
+        # Add to vector database
         collection.add(
-            documents=[conversation_text],
-            metadatas=[{
-                "category": "conversation",
-                "subcategory": "exchange",
-                "visitor_id": visitor_id,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-            }],
-            ids=[f"conversation_{message_id}"]
+            documents=[combined_text],
+            metadatas=[metadata],
+            ids=[doc_id]
         )
         
-        print(f"Successfully added conversation exchange to vector database")
+        print(f"Successfully added conversation to vector database with ID {doc_id}")
         return True
     except Exception as e:
         print(f"Error adding conversation to vector database: {e}")
@@ -433,73 +450,99 @@ def add_conversation_to_vector_db(message, response, visitor_id, message_id=None
 
 def query_vector_db(query, n_results=3, user_id=None, visitor_id=None, include_conversation=True):
     """
-    Query the vector database with the user's question
-    If include_conversation is True and visitor_id is provided, will also search conversation history
+    Query the vector database for relevant content
+    Now supports user-specific collections
     """
     try:
-        # Use a single collection for all users
-        collection_name = "portfolio_data"
+        # Use the user_id in collection name if provided
+        collection_name = f"portfolio_data_{user_id}" if user_id else "portfolio_data"
         print(f"Querying collection: {collection_name}")
         
-        # Get or create the collection
-        collection = chroma_client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=openai_ef
-        )
+        # Get or create the collection (should exist already)
+        try:
+            collection = chroma_client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=openai_ef
+            )
+        except Exception as coll_error:
+            print(f"Error getting collection {collection_name}: {coll_error}")
+            print("Falling back to default collection")
+            collection = chroma_client.get_or_create_collection(
+                name="portfolio_data",
+                embedding_function=openai_ef
+            )
         
-        # Check if collection is empty
-        collection_count = collection.count()
-        if collection_count == 0:
-            print("Vector database is empty, returning empty results")
-            return {
-                "documents": [],
-                "metadatas": [],
-                "distances": []
-            }
-        
-        # Query collection with query text
+        # Query for relevant content
+        query_filter = {}
+        if user_id:
+            query_filter = {"user_id": {"$eq": user_id}}
+            
         results = collection.query(
             query_texts=[query],
             n_results=n_results,
-            where=({"category": {"$ne": "conversation"}} if not include_conversation else None)
+            where=query_filter
         )
         
-        # If visitor_id is provided and include_conversation is True,
-        # also search for relevant conversation history
-        if visitor_id and include_conversation:
-            print(f"Also searching conversation history for visitor: {visitor_id}")
-            conversation_results = collection.query(
-                query_texts=[query],
-                n_results=3,  # Get top 3 relevant conversation exchanges
-                where={"category": "conversation", "visitor_id": visitor_id}
-            )
+        # Format results
+        formatted_results = []
+        if results["documents"] and len(results["documents"]) > 0:
+            documents = results["documents"][0]
+            metadatas = results["metadatas"][0]
+            distances = results["distances"][0]
             
-            # Append conversation results if any found
-            if conversation_results and len(conversation_results.get("documents", [[]])[0]) > 0:
-                print(f"Found {len(conversation_results['documents'][0])} relevant conversation exchanges")
+            for i in range(len(documents)):
+                formatted_results.append({
+                    "content": documents[i],
+                    "metadata": metadatas[i],
+                    "distance": distances[i]
+                })
+        
+        print(f"Found {len(formatted_results)} relevant documents in vector DB")
                 
-                # Add to results
-                for i, doc in enumerate(conversation_results["documents"][0]):
-                    results["documents"][0].append(doc)
-                    results["metadatas"][0].append(conversation_results["metadatas"][0][i])
-                    results["distances"][0].append(conversation_results["distances"][0][i])
-        
-        # Extract and structure results
-        query_results = {
-            "documents": results.get("documents", [[]])[0],
-            "metadatas": results.get("metadatas", [[]])[0],
-            "distances": results.get("distances", [[]])[0]
-        }
-        
-        print(f"Query '{query}' returned {len(query_results['documents'])} total results")
-        return query_results
+        # Include conversation history if requested
+        if include_conversation and visitor_id:
+            # Try to get or create conversation collection
+            conv_collection_name = f"conversation_{user_id}" if user_id else "conversation"
+            print(f"Querying conversation collection: {conv_collection_name}")
+            
+            try:
+                conv_collection = chroma_client.get_or_create_collection(
+                    name=conv_collection_name,
+                    embedding_function=openai_ef
+                )
+                
+                # Filter for current visitor conversations
+                conv_filter = {"visitor_id": {"$eq": visitor_id}}
+                if user_id:
+                    conv_filter["user_id"] = {"$eq": user_id}
+                    
+                conv_results = conv_collection.query(
+                    query_texts=[query],
+                    n_results=2,  # Limit to just a few most relevant conversations
+                    where=conv_filter
+                )
+                
+                # Add conversation results
+                if conv_results["documents"] and len(conv_results["documents"]) > 0:
+                    conv_documents = conv_results["documents"][0]
+                    conv_metadatas = conv_results["metadatas"][0]
+                    conv_distances = conv_results["distances"][0]
+                    
+                    for i in range(len(conv_documents)):
+                        formatted_results.append({
+                            "content": conv_documents[i],
+                            "metadata": conv_metadatas[i],
+                            "distance": conv_distances[i]
+                        })
+                        
+                    print(f"Added {len(conv_documents)} relevant conversation items")
+            except Exception as conv_error:
+                print(f"Error querying conversation history: {conv_error}")
+                
+        return formatted_results
     except Exception as e:
         print(f"Error querying vector database: {e}")
-        return {
-            "documents": [],
-            "metadatas": [],
-            "distances": []
-        }
+        return []
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def call_openai_api(system_prompt, query):
@@ -524,21 +567,17 @@ def generate_ai_response(query, search_results, profile_data=None, chat_history=
     If profile_data is provided, use it to personalize the response
     If chat_history is provided, include it for conversation context
     """
-    # If OpenAI is not available, return a demo mode message
-    if not openai_available:
-        return "I'm sorry, but the AI service is currently in demo mode due to missing API keys. Please configure your OpenAI API key in Railway variables or .env file."
-    
     # Combine search results into context
     context = ""
     if search_results["documents"] and len(search_results["documents"]) > 0 and len(search_results["documents"][0]) > 0:
         for i, doc in enumerate(search_results["documents"][0]):
             subcategory = search_results["metadatas"][0][i]["subcategory"]
             context += f"{subcategory.upper()}: {doc}\n\n"
-        logger.info(f"Found {len(search_results['documents'][0])} relevant context items from vector database")
+        print(f"[INFO] Found {len(search_results['documents'][0])} relevant context items from vector database")
     else:
         # If no results, use a default message
         context = "No specific information available. Please provide a general response."
-        logger.warning("No vector DB results to include in context - response will be limited")
+        print("[WARNING] No vector DB results to include in context - response will be limited")
     
     # Extract name from profile data for better personalization
     user_name = profile_data.get('name', '') if profile_data else ''
@@ -566,19 +605,19 @@ EXPERIENCE: {profile_data.get('experience', 'Not provided')}
 PROJECTS: {profile_data.get('projects', 'Not provided')}
 INTERESTS: {profile_data.get('interests', 'Not provided')}
         """
-        logger.info(f"Added complete profile data to context ({len(profile_context.split())} words)")
+        print(f"[INFO] Added complete profile data to context ({len(profile_context.split())} words)")
         
         # Log a summary of available profile fields for debugging
         available_fields = [field for field in ['name', 'location', 'bio', 'skills', 'experience', 'projects', 'interests'] 
                           if profile_data.get(field)]
-        logger.info(f"Available profile fields: {', '.join(available_fields)}")
+        print(f"[INFO] Available profile fields: {', '.join(available_fields)}")
     else:
-        logger.warning("No profile data available - responses will be generic")
+        print("[WARNING] No profile data available - responses will be generic")
     
     # Format conversation history if provided
     conversation_context = ""
     if chat_history and len(chat_history) > 0:
-        logger.info(f"Including {len(chat_history)} messages from conversation history")
+        print(f"[INFO] Including {len(chat_history)} messages from conversation history")
         conversation_context = "PREVIOUS CONVERSATION:\n"
         for i, msg in enumerate(chat_history):
             if msg.get('sender') == 'user':
@@ -587,7 +626,7 @@ INTERESTS: {profile_data.get('interests', 'Not provided')}
                 conversation_context += f"You: {msg.get('response', '')}\n"
         conversation_context += "\n"
     else:
-        logger.info("No conversation history provided")
+        print("[INFO] No conversation history provided")
     
     # Create a strongly worded system prompt that clearly instructs the AI to respond as the user
     system_prompt = f"""
@@ -618,17 +657,26 @@ If asked about something not covered in the profile information, politely redire
     
     # Generate response
     try:
-        logger.info("Sending chat completion request to OpenAI with strict context-only instructions")
-        return call_openai_api(system_prompt, query)
+        print("[INFO] Sending chat completion request to OpenAI with strict context-only instructions")
+        response = openai.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ],
+            temperature=0.3,  # Lower temperature to minimize creativity
+            max_tokens=500
+        )
+        return response.choices[0].message.content
     except openai.APIError as e:
-        logger.error(f"OpenAI API Error: {str(e)}")
+        print(f"OpenAI API Error: {str(e)}")
         return f"I'm sorry, I couldn't generate a response at the moment due to an API error. Please try again later."
     except openai.APIConnectionError as e:
-        logger.error(f"OpenAI API Connection Error: {str(e)}")
+        print(f"OpenAI API Connection Error: {str(e)}")
         return f"I'm sorry, I couldn't connect to the response service. Please check your internet connection and try again."
     except openai.RateLimitError as e:
-        logger.error(f"OpenAI Rate Limit Error: {str(e)}")
+        print(f"OpenAI Rate Limit Error: {str(e)}")
         return f"I'm sorry, the service is currently experiencing high demand. Please try again in a few moments."
     except Exception as e:
-        logger.error(f"Error generating AI response: {e}")
+        print(f"Error generating AI response: {e}")
         return "I'm sorry, I couldn't generate a response at the moment. Please try again later." 

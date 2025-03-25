@@ -2,6 +2,22 @@
 
 A FastAPI backend for an AI agent chatbot with profile management, powered by OpenAI and Supabase.
 
+## Recent Updates
+
+### Multi-User Support Implementation
+
+The backend has been updated to support multiple users with the following changes:
+
+1. **User-Specific Profiles**: Each user now has their own profile data, stored with their `user_id`.
+2. **User-Specific Vector Collections**: ChromaDB collections are now created per-user, allowing for personalized AI responses.
+3. **Improved Database Schema**: Updated the Supabase schema to support attaching profiles to specific users.
+4. **Targeted Chatbot Responses**: Chat requests can now target specific users via the `target_user_id` parameter.
+5. **Enhanced Security**: Added user authentication and authorization for sensitive operations.
+6. **Improved Error Handling**: More robust error handling for database and API operations.
+7. **Conversation History**: Chat history is now stored and retrieved per user.
+
+These improvements allow multiple users to have their own AI agents that respond based on their specific profile data, creating a more personalized experience.
+
 ## Local Development
 
 1. Clone the repository
