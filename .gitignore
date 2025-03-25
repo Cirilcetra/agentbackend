@@ -15,6 +15,9 @@ venv.bak/
 .env.*
 !.env.example
 
+# Railway secrets
+.railway.secrets.json
+
 # Logs
 *.log
 

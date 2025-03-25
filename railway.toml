@@ -10,4 +10,8 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
 [var]
-RAILWAY_ENVIRONMENT = "true" 
+RAILWAY_ENVIRONMENT = "true"
+# Add your variables here - replace with actual values
+# OPENAI_API_KEY = "your-api-key-here"
+# SUPABASE_URL = "your-supabase-url"
+# SUPABASE_KEY = "your-supabase-key" 
