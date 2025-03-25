@@ -12,8 +12,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy environment files first (these are used by start.py)
+COPY .env* .
+COPY .railway.secrets.json .
+
 # Copy the rest of the code
 COPY . .
+
+# Make sure environment files have the right permissions
+RUN chmod 644 .env* .railway.secrets.json
 
 # Make start.py executable
 RUN chmod +x start.py
@@ -21,6 +28,14 @@ RUN chmod +x start.py
 # Default port for the application (can be overridden by Railway)
 ENV PORT=8000
 ENV RAILWAY_ENVIRONMENT=true
+
+# NOTE: Add your environment variables through the Railway dashboard
+# DO NOT hardcode sensitive values in this file
+# Required variables:
+# - OPENAI_API_KEY
+# - SUPABASE_URL
+# - SUPABASE_KEY
+# - DATABASE_URL
 
 # Expose the port
 EXPOSE 8000

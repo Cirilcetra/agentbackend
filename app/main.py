@@ -1,10 +1,82 @@
+import os
+import sys
+import logging
+import json
+from pathlib import Path
+
+# Configure basic logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables aggressively before any other imports
+def load_dotenv_from_all_sources():
+    """Load environment variables from all possible sources"""
+    try:
+        # Try to load from various dotenv files
+        for env_file in ['.env', '.env.production', '.env.railway']:
+            path = Path(env_file)
+            if path.exists():
+                logger.info(f"Loading environment variables from {env_file}")
+                with open(env_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        try:
+                            key, value = line.split('=', 1)
+                            # Only set if not already in environment
+                            if key not in os.environ:
+                                os.environ[key] = value
+                                logger.info(f"Set environment variable from {env_file}: {key}")
+                        except ValueError:
+                            continue
+        
+        # Try to load from JSON
+        json_file = '.railway.secrets.json'
+        if Path(json_file).exists():
+            logger.info(f"Loading environment variables from {json_file}")
+            try:
+                with open(json_file, 'r') as f:
+                    data = json.load(f)
+                    for key, value in data.items():
+                        # Only set if not already in environment
+                        if key not in os.environ:
+                            os.environ[key] = str(value)
+                            logger.info(f"Set environment variable from JSON: {key}")
+            except json.JSONDecodeError:
+                logger.warning(f"Could not parse {json_file} as JSON")
+        
+        # Log the environment variables we found
+        logger.info("Environment variable check results:")
+        for key in ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "DATABASE_URL"]:
+            if key in os.environ and os.environ[key]:
+                # Mask the values for security
+                value = os.environ[key]
+                if len(value) > 8:
+                    masked = value[:4] + "..." + value[-4:]
+                else:
+                    masked = "****"
+                logger.info(f"✓ {key}: {masked}")
+            else:
+                logger.warning(f"✗ {key}: Not set")
+    
+    except Exception as e:
+        logger.error(f"Error loading environment variables: {e}")
+
+# Load environment variables before other imports
+load_dotenv_from_all_sources()
+
+# Now import the rest
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
-import logging
-import os
-import json
 import uuid
 from dotenv import load_dotenv
 

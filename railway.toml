@@ -11,7 +11,12 @@ restartPolicyMaxRetries = 10
 
 [var]
 RAILWAY_ENVIRONMENT = "true"
-# Add your variables here - replace with actual values
-# OPENAI_API_KEY = "your-api-key-here"
-# SUPABASE_URL = "your-supabase-url"
-# SUPABASE_KEY = "your-supabase-key" 
+# IMPORTANT: DO NOT add sensitive variables here!
+# Add these variables through the Railway dashboard:
+# https://railway.app/dashboard > Your Project > Variables
+#
+# Required variables:
+# - OPENAI_API_KEY
+# - SUPABASE_URL
+# - SUPABASE_KEY
+# - DATABASE_URL 
