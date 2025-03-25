@@ -12,23 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create a startup script
-RUN echo '#!/bin/bash\n\
-echo "Starting AI Agent Backend"\n\
-echo "PORT: $PORT"\n\
-echo "HOST: 0.0.0.0"\n\
-uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1\n\
-' > /app/start.sh && chmod +x /app/start.sh
-
 # Copy the rest of the code
 COPY . .
+
+# Make start.py executable
+RUN chmod +x start.py
 
 # Default port for the application (can be overridden by Railway)
 ENV PORT=8000
 ENV RAILWAY_ENVIRONMENT=true
 
 # Expose the port
-EXPOSE ${PORT}
+EXPOSE 8000
 
 # Command to run the application
-CMD ["/app/start.sh"] 
+CMD ["python", "start.py"] 
