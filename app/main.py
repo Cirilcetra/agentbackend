@@ -44,18 +44,27 @@ def load_dotenv_from_all_sources():
             try:
                 with open(json_file, 'r') as f:
                     data = json.load(f)
-                    for key, value in data.items():
-                        # Only set if not already in environment
-                        if key not in os.environ:
-                            os.environ[key] = str(value)
-                            logger.info(f"Set environment variable from JSON: {key}")
+                    # Skip placeholder or template entries
+                    if '_README' in data:
+                        logger.info(f"Found placeholder .railway.secrets.json file - skipping")
+                    else:
+                        for key, value in data.items():
+                            # Skip template values
+                            if 'your-' in str(value) or 'here' in str(value):
+                                logger.info(f"Skipping template value for {key}")
+                                continue
+                                
+                            # Only set if not already in environment
+                            if key not in os.environ:
+                                os.environ[key] = str(value)
+                                logger.info(f"Set environment variable from JSON: {key}")
             except json.JSONDecodeError:
                 logger.warning(f"Could not parse {json_file} as JSON")
         
         # Log the environment variables we found
         logger.info("Environment variable check results:")
         for key in ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "DATABASE_URL"]:
-            if key in os.environ and os.environ[key]:
+            if key in os.environ and os.environ[key] and not 'your-' in os.environ[key]:
                 # Mask the values for security
                 value = os.environ[key]
                 if len(value) > 8:
@@ -65,6 +74,10 @@ def load_dotenv_from_all_sources():
                 logger.info(f"✓ {key}: {masked}")
             else:
                 logger.warning(f"✗ {key}: Not set")
+        
+        # Check if Railway environment variables are present
+        if os.environ.get("RAILWAY_ENVIRONMENT"):
+            logger.info("Running in Railway environment, expecting environment variables to be set in Railway dashboard")
     
     except Exception as e:
         logger.error(f"Error loading environment variables: {e}")

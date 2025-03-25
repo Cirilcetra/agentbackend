@@ -12,9 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Create empty env and secrets file to ensure they exist
+RUN touch .env.empty
+RUN echo '{"_README": "Add environment variables through Railway dashboard"}' > .railway.secrets.json
+
 # Copy environment files first (these are used by start.py)
-COPY .env* .
-COPY .railway.secrets.json .
+# Use wildcard patterns that won't fail if files don't exist
+COPY .env* ./
+# We don't need to copy .railway.secrets.json since we created it above
 
 # Copy the rest of the code
 COPY . .
