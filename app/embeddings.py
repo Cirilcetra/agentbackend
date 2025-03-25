@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import uuid
 import time
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
 # Load environment variables
 load_dotenv()
@@ -14,22 +14,39 @@ load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Mock embedding function for when OpenAI isn't available
+class MockEmbeddingFunction:
+    def __init__(self):
+        logger.warning("Using mock embedding function - limited functionality will be available")
+    
+    def __call__(self, input):
+        # Return a simple fixed-dimension vector for all inputs
+        if isinstance(input, str):
+            input = [input]
+        return [[0.1] * 1536 for _ in input]  # OpenAI embeddings are 1536 dimensions
+
 # Configure OpenAI with retry logic
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def setup_openai():
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("Missing OpenAI API key. Set OPENAI_API_KEY in .env file.")
+        logger.error("Missing OpenAI API key. Set OPENAI_API_KEY in Railway variables or .env file.")
+        raise ValueError("Missing OpenAI API key. Set OPENAI_API_KEY in Railway variables or .env file.")
     openai.api_key = api_key
     logger.info("OpenAI API key configured successfully")
     return api_key
 
-# Configure OpenAI
+# Configure OpenAI with fallback for demo mode
+openai_api_key = None
+openai_available = False
 try:
     openai_api_key = setup_openai()
+    openai_available = True
+    logger.info("OpenAI services initialized successfully")
 except Exception as e:
     logger.error(f"Error setting up OpenAI: {e}")
-    raise ValueError(f"Failed to initialize OpenAI: {e}")
+    logger.warning("Running in DEMO MODE with limited functionality (no AI responses)")
+    # Don't raise an error, continue with limited functionality
 
 # Set up ChromaDB client with persistence for Railway
 try:
@@ -52,7 +69,7 @@ except Exception as e:
     chroma_client = chromadb.Client()
     logger.warning("Falling back to in-memory ChromaDB client")
 
-# Create embedding function using OpenAI embeddings
+# Create embedding function using OpenAI embeddings or fallback to mock
 # Use a custom embedding function compatible with OpenAI v1.x
 class OpenAIEmbeddingFunction:
     def __init__(self, api_key, model_name="text-embedding-ada-002"):
@@ -74,14 +91,33 @@ class OpenAIEmbeddingFunction:
         embeddings = [item.embedding for item in response.data]
         return embeddings
 
-# Initialize custom embedding function
-openai_ef = OpenAIEmbeddingFunction(api_key=openai.api_key)
+if openai_available:
+    # Initialize custom embedding function
+    openai_ef = OpenAIEmbeddingFunction(api_key=openai.api_key)
+    logger.info("Using OpenAI embedding function")
+else:
+    # Use mock embedding function
+    openai_ef = MockEmbeddingFunction()
+    logger.warning("Using mock embedding function - search will have limited accuracy")
 
 # Create or get collection
-portfolio_collection = chroma_client.get_or_create_collection(
-    name="portfolio_data",
-    embedding_function=openai_ef
-)
+try:
+    portfolio_collection = chroma_client.get_or_create_collection(
+        name="portfolio_data",
+        embedding_function=openai_ef
+    )
+    logger.info("Portfolio collection initialized")
+except Exception as e:
+    logger.error(f"Error creating collection: {e}")
+    # Create a minimal interface to avoid breaking calls
+    from types import SimpleNamespace
+    portfolio_collection = SimpleNamespace(
+        query=lambda **kwargs: {"documents": [[]], "metadatas": [[]], "distances": [[]]},
+        add=lambda **kwargs: None,
+        delete=lambda **kwargs: None,
+        count=lambda: 0
+    )
+    logger.warning("Using mock collection - functionality will be limited")
 
 def add_profile_to_vector_db(profile_data, user_id=None):
     """
@@ -432,6 +468,9 @@ def query_vector_db(query, n_results=3, user_id=None, visitor_id=None, include_c
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def call_openai_api(system_prompt, query):
     """Call OpenAI API with retry logic"""
+    if not openai_available:
+        return "I'm sorry, but the AI service is currently in demo mode and cannot generate responses. Please configure your OpenAI API key."
+    
     response = openai.chat.completions.create(
         model="gpt-4-turbo",
         messages=[
@@ -449,6 +488,10 @@ def generate_ai_response(query, search_results, profile_data=None, chat_history=
     If profile_data is provided, use it to personalize the response
     If chat_history is provided, include it for conversation context
     """
+    # If OpenAI is not available, return a demo mode message
+    if not openai_available:
+        return "I'm sorry, but the AI service is currently in demo mode due to missing API keys. Please configure your OpenAI API key in Railway variables or .env file."
+    
     # Combine search results into context
     context = ""
     if search_results["documents"] and len(search_results["documents"]) > 0 and len(search_results["documents"][0]) > 0:

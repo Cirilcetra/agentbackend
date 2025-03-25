@@ -7,10 +7,6 @@ import os
 import json
 import uuid
 from dotenv import load_dotenv
-from app import models
-from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
-from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
-from app.routes import chatbot, profiles, admin
 
 # Load environment variables
 load_dotenv()
@@ -52,12 +48,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers from the routes directory
-app.include_router(chatbot.router, prefix="/chat", tags=["chatbot"])
-app.include_router(profiles.router, prefix="/profile", tags=["profiles"])
-app.include_router(admin.router, prefix="/admin", tags=["admin"])
+# Import modules with error handling
+try:
+    from app import models
+    from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
+    logging.info("Database modules imported successfully")
+except Exception as e:
+    logging.error(f"Error importing database modules: {e}")
+    # Create stub functions to prevent app from crashing if database fails
+    def get_profile_data(*args, **kwargs): 
+        return {"bio": "Demo mode - database connection failed", "id": "demo"}
+    def update_profile_data(*args, **kwargs): return {}
+    def log_chat_message(*args, **kwargs): return [{"id": "demo"}]
+    def get_chat_history(*args, **kwargs): return []
+    # Create minimal models module if needed
+    import types
+    models = types.SimpleNamespace()
+    models.ChatRequest = BaseModel
+    models.ChatHistoryItem = BaseModel
+    models.ChatHistoryResponse = BaseModel
 
-# Define models
+try:
+    from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
+    logging.info("Embeddings modules imported successfully")
+except Exception as e:
+    logging.error(f"Error importing embeddings modules: {e}")
+    # Create stub functions for AI functionality
+    def add_profile_to_vector_db(*args, **kwargs): return True
+    def query_vector_db(*args, **kwargs): return {"documents": [], "metadatas": [], "distances": []}
+    def generate_ai_response(*args, **kwargs): 
+        return "AI services are currently in demo mode due to initialization errors. Please check the logs."
+    def add_conversation_to_vector_db(*args, **kwargs): return True
+
+# Try importing routes, but app can run without them
+try:
+    from app.routes import chatbot, profiles, admin
+    # Include routers from the routes directory
+    app.include_router(chatbot.router, prefix="/chat", tags=["chatbot"])
+    app.include_router(profiles.router, prefix="/profile", tags=["profiles"])
+    app.include_router(admin.router, prefix="/admin", tags=["admin"])
+    logging.info("Route modules imported and registered successfully")
+except Exception as e:
+    logging.error(f"Error loading route modules: {e}")
+    logging.warning("Running with limited API endpoints (core endpoints only)")
+
+# Define models (moved below other imports)
 class ProfileData(BaseModel):
     bio: Optional[str] = None
     skills: Optional[str] = None
@@ -85,11 +120,15 @@ async def root():
     This is used by Railway to verify the application is running
     """
     # Simple, fast response that doesn't depend on any external services
-    return {
+    config = {
         "status": "healthy",
         "service": "AI Agent Backend",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "environment": "production" if os.getenv("RAILWAY_ENVIRONMENT") else "development",
+        "openai_configured": os.getenv("OPENAI_API_KEY") is not None,
+        "supabase_configured": os.getenv("SUPABASE_URL") is not None and os.getenv("SUPABASE_KEY") is not None
     }
+    return config
 
 # Get profile data - kept for backward compatibility
 @app.get("/profile")

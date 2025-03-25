@@ -15,9 +15,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def check_environment():
+    """Check and log environment variables status"""
+    # Important environment variables to check
+    env_vars = [
+        "OPENAI_API_KEY", 
+        "SUPABASE_URL", 
+        "SUPABASE_KEY",
+        "PORT", 
+        "RAILWAY_ENVIRONMENT",
+        "DATABASE_URL"
+    ]
+    
+    logger.info("Environment variables status:")
+    for var in env_vars:
+        # Check both os.environ and os.getenv for thoroughness
+        value = os.environ.get(var) or os.getenv(var)
+        if value:
+            # Mask sensitive values
+            if var in ["OPENAI_API_KEY", "SUPABASE_KEY", "DATABASE_URL"]:
+                masked = value[:4] + "..." + value[-4:] if len(value) > 8 else "****"
+                logger.info(f"✓ {var}: {masked}")
+            else:
+                logger.info(f"✓ {var}: {value}")
+        else:
+            logger.warning(f"✗ {var}: Not set")
+
 def start_server():
     """Start the uvicorn server with proper port handling"""
     try:
+        # Check environment
+        check_environment()
+        
         # Get PORT from environment variable with fallback to 8000
         port = os.environ.get("PORT", "8000")
         
