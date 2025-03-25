@@ -5,17 +5,52 @@ from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
 import uuid
 import time
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Load environment variables
 load_dotenv()
 
-# Configure OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
-if not openai.api_key:
-    raise ValueError("Missing OpenAI API key. Set OPENAI_API_KEY in .env file.")
+# Configure logging
+logger = logging.getLogger(__name__)
 
-# Set up ChromaDB client
-chroma_client = chromadb.Client()
+# Configure OpenAI with retry logic
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+def setup_openai():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("Missing OpenAI API key. Set OPENAI_API_KEY in .env file.")
+    openai.api_key = api_key
+    logger.info("OpenAI API key configured successfully")
+    return api_key
+
+# Configure OpenAI
+try:
+    openai_api_key = setup_openai()
+except Exception as e:
+    logger.error(f"Error setting up OpenAI: {e}")
+    raise ValueError(f"Failed to initialize OpenAI: {e}")
+
+# Set up ChromaDB client with persistence for Railway
+try:
+    # For Railway, use in-memory store, as the filesystem is ephemeral
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        logger.info("Running in Railway environment, using in-memory ChromaDB")
+        chroma_client = chromadb.Client()
+    else:
+        # For local development, use persistent directory
+        persist_dir = os.path.join(os.getcwd(), "chroma_db")
+        if not os.path.exists(persist_dir):
+            os.makedirs(persist_dir)
+        logger.info(f"Using persistent ChromaDB directory: {persist_dir}")
+        chroma_client = chromadb.PersistentClient(path=persist_dir)
+    
+    logger.info("ChromaDB client initialized successfully")
+except Exception as e:
+    logger.error(f"Error initializing ChromaDB: {e}")
+    # Fallback to in-memory client if persistent fails
+    chroma_client = chromadb.Client()
+    logger.warning("Falling back to in-memory ChromaDB client")
 
 # Create embedding function using OpenAI embeddings
 # Use a custom embedding function compatible with OpenAI v1.x
@@ -394,6 +429,20 @@ def query_vector_db(query, n_results=3, user_id=None, visitor_id=None, include_c
             "distances": []
         }
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+def call_openai_api(system_prompt, query):
+    """Call OpenAI API with retry logic"""
+    response = openai.chat.completions.create(
+        model="gpt-4-turbo",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ],
+        temperature=0.3,  # Lower temperature to minimize creativity
+        max_tokens=500
+    )
+    return response.choices[0].message.content
+
 def generate_ai_response(query, search_results, profile_data=None, chat_history=None):
     """
     Generate a response using OpenAI based on the query and search results
@@ -406,11 +455,11 @@ def generate_ai_response(query, search_results, profile_data=None, chat_history=
         for i, doc in enumerate(search_results["documents"][0]):
             subcategory = search_results["metadatas"][0][i]["subcategory"]
             context += f"{subcategory.upper()}: {doc}\n\n"
-        print(f"[INFO] Found {len(search_results['documents'][0])} relevant context items from vector database")
+        logger.info(f"Found {len(search_results['documents'][0])} relevant context items from vector database")
     else:
         # If no results, use a default message
         context = "No specific information available. Please provide a general response."
-        print("[WARNING] No vector DB results to include in context - response will be limited")
+        logger.warning("No vector DB results to include in context - response will be limited")
     
     # Extract name from profile data for better personalization
     user_name = profile_data.get('name', '') if profile_data else ''
@@ -438,19 +487,19 @@ EXPERIENCE: {profile_data.get('experience', 'Not provided')}
 PROJECTS: {profile_data.get('projects', 'Not provided')}
 INTERESTS: {profile_data.get('interests', 'Not provided')}
         """
-        print(f"[INFO] Added complete profile data to context ({len(profile_context.split())} words)")
+        logger.info(f"Added complete profile data to context ({len(profile_context.split())} words)")
         
         # Log a summary of available profile fields for debugging
         available_fields = [field for field in ['name', 'location', 'bio', 'skills', 'experience', 'projects', 'interests'] 
                           if profile_data.get(field)]
-        print(f"[INFO] Available profile fields: {', '.join(available_fields)}")
+        logger.info(f"Available profile fields: {', '.join(available_fields)}")
     else:
-        print("[WARNING] No profile data available - responses will be generic")
+        logger.warning("No profile data available - responses will be generic")
     
     # Format conversation history if provided
     conversation_context = ""
     if chat_history and len(chat_history) > 0:
-        print(f"[INFO] Including {len(chat_history)} messages from conversation history")
+        logger.info(f"Including {len(chat_history)} messages from conversation history")
         conversation_context = "PREVIOUS CONVERSATION:\n"
         for i, msg in enumerate(chat_history):
             if msg.get('sender') == 'user':
@@ -459,7 +508,7 @@ INTERESTS: {profile_data.get('interests', 'Not provided')}
                 conversation_context += f"You: {msg.get('response', '')}\n"
         conversation_context += "\n"
     else:
-        print("[INFO] No conversation history provided")
+        logger.info("No conversation history provided")
     
     # Create a strongly worded system prompt that clearly instructs the AI to respond as the user
     system_prompt = f"""
@@ -490,26 +539,17 @@ If asked about something not covered in the profile information, politely redire
     
     # Generate response
     try:
-        print("[INFO] Sending chat completion request to OpenAI with strict context-only instructions")
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
-            temperature=0.3,  # Lower temperature to minimize creativity
-            max_tokens=500
-        )
-        return response.choices[0].message.content
+        logger.info("Sending chat completion request to OpenAI with strict context-only instructions")
+        return call_openai_api(system_prompt, query)
     except openai.APIError as e:
-        print(f"OpenAI API Error: {str(e)}")
+        logger.error(f"OpenAI API Error: {str(e)}")
         return f"I'm sorry, I couldn't generate a response at the moment due to an API error. Please try again later."
     except openai.APIConnectionError as e:
-        print(f"OpenAI API Connection Error: {str(e)}")
+        logger.error(f"OpenAI API Connection Error: {str(e)}")
         return f"I'm sorry, I couldn't connect to the response service. Please check your internet connection and try again."
     except openai.RateLimitError as e:
-        print(f"OpenAI Rate Limit Error: {str(e)}")
+        logger.error(f"OpenAI Rate Limit Error: {str(e)}")
         return f"I'm sorry, the service is currently experiencing high demand. Please try again in a few moments."
     except Exception as e:
-        print(f"Error generating AI response: {e}")
+        logger.error(f"Error generating AI response: {e}")
         return "I'm sorry, I couldn't generate a response at the moment. Please try again later." 

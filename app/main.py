@@ -16,14 +16,24 @@ from app.routes import chatbot, profiles, admin
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("backend.log"),
-        logging.StreamHandler()
-    ]
-)
+try:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.StreamHandler()  # Always output to stdout for Railway
+        ]
+    )
+    
+    # Only attempt to write to log file if not in Railway environment
+    if not os.getenv("RAILWAY_ENVIRONMENT"):
+        try:
+            logging.getLogger().addHandler(logging.FileHandler("backend.log"))
+            logging.info("Added file handler for logging")
+        except Exception as e:
+            logging.warning(f"Could not set up file logging: {e}")
+except Exception as e:
+    print(f"Warning: Could not configure logging: {e}")
 
 # Create the FastAPI app
 app = FastAPI(
@@ -70,7 +80,16 @@ class ChatRequest(BaseModel):
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the AIChat API"}
+    """
+    Root endpoint for health checks
+    This is used by Railway to verify the application is running
+    """
+    # Simple, fast response that doesn't depend on any external services
+    return {
+        "status": "healthy",
+        "service": "AI Agent Backend",
+        "version": "1.0.0"
+    }
 
 # Get profile data - kept for backward compatibility
 @app.get("/profile")
