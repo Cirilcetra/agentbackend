@@ -28,18 +28,50 @@ def check_environment():
     ]
     
     logger.info("Environment variables status:")
+    
+    # Debug all environment variables to see what's available
+    logger.info("All environment variables (keys only):")
+    env_keys = list(os.environ.keys())
+    logger.info(f"Found {len(env_keys)} environment variables: {', '.join(env_keys)}")
+    
+    # Detailed check of critical variables
     for var in env_vars:
-        # Check both os.environ and os.getenv for thoroughness
-        value = os.environ.get(var) or os.getenv(var)
-        if value:
+        # Check using os.environ.get
+        env_value = os.environ.get(var)
+        # Check using os.getenv
+        getenv_value = os.getenv(var)
+        
+        if env_value or getenv_value:
             # Mask sensitive values
+            value = env_value or getenv_value
+            
+            # Show which method found the value
+            source = []
+            if env_value: source.append("os.environ")
+            if getenv_value: source.append("os.getenv")
+            
             if var in ["OPENAI_API_KEY", "SUPABASE_KEY", "DATABASE_URL"]:
                 masked = value[:4] + "..." + value[-4:] if len(value) > 8 else "****"
-                logger.info(f"✓ {var}: {masked}")
+                logger.info(f"✓ {var}: {masked} (found via {', '.join(source)})")
             else:
-                logger.info(f"✓ {var}: {value}")
+                logger.info(f"✓ {var}: {value} (found via {', '.join(source)})")
         else:
             logger.warning(f"✗ {var}: Not set")
+    
+    # Special focus on OpenAI API key
+    openai_key = os.environ.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        logger.info(f"OpenAI API Key appears to be set with length: {len(openai_key)}")
+        if len(openai_key) < 20:
+            logger.warning(f"OpenAI API Key seems too short - may be invalid")
+        if openai_key.startswith(("'", '"')) or openai_key.endswith(("'", '"')):
+            logger.warning(f"OpenAI API Key contains quotes - this may cause issues")
+    else:
+        logger.warning("OpenAI API Key is not set - application will run in demo mode")
+        # Try to find keys with similar names
+        for key in os.environ.keys():
+            if 'openai' in key.lower() or 'api' in key.lower():
+                logger.info(f"Found possible related key: {key}")
 
 def start_server():
     """Start the uvicorn server with proper port handling"""

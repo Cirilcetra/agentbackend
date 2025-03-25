@@ -28,12 +28,48 @@ class MockEmbeddingFunction:
 # Configure OpenAI with retry logic
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def setup_openai():
-    api_key = os.environ.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    # Try multiple ways to get the API key
+    direct_env = os.environ.get("OPENAI_API_KEY")
+    getenv_value = os.getenv("OPENAI_API_KEY")
+    api_key = direct_env or getenv_value
+    
+    logger.info(f"API key detection methods: os.environ: {'✓' if direct_env else '✗'}, os.getenv: {'✓' if getenv_value else '✗'}")
+    
+    # Debugging for Railway environment
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_ENVIRONMENT"):
+        logger.info("Running in Railway environment, checking for environment variables...")
+        # List all environment variable keys that might contain API keys
+        relevant_keys = [k for k in os.environ.keys() if 'key' in k.lower() or 'api' in k.lower() or 'openai' in k.lower()]
+        if relevant_keys:
+            logger.info(f"Found potentially relevant environment variables: {', '.join(relevant_keys)}")
+    
     if not api_key:
         logger.error("Missing OpenAI API key. Set OPENAI_API_KEY in Railway variables or .env file.")
         raise ValueError("Missing OpenAI API key. Set OPENAI_API_KEY in Railway variables or .env file.")
+    
+    # Check for common API key formatting issues
+    if api_key:
+        if len(api_key) < 30:  # OpenAI keys are typically quite long
+            logger.warning(f"API key seems unusually short (length: {len(api_key)}), may be invalid")
+        if api_key.startswith(("'", '"')) or api_key.endswith(("'", '"')):
+            logger.warning("API key contains quotes - this will cause authentication failures")
+            # Remove quotes if present
+            api_key = api_key.strip("'\"")
+            logger.info("Quotes removed from API key")
+    
+    # Set the API key
     openai.api_key = api_key
     logger.info("OpenAI API key configured successfully")
+    
+    # Test the API key with a simple request
+    try:
+        logger.info("Testing OpenAI API key with a simple models list request...")
+        openai.models.list()
+        logger.info("OpenAI API key is valid! Models list request succeeded.")
+    except Exception as e:
+        logger.error(f"OpenAI API key validation failed: {str(e)}")
+        raise ValueError(f"OpenAI API key validation failed: {str(e)}")
+    
     return api_key
 
 # Configure OpenAI with fallback for demo mode
