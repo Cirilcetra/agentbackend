@@ -12,10 +12,13 @@ DROP TABLE IF EXISTS admin_users CASCADE;
 CREATE TABLE profiles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  bio TEXT,
-  skills TEXT,
-  experience TEXT,
-  interests TEXT,
+  bio TEXT DEFAULT 'I am a software engineer with a passion for building AI and web applications. I specialize in full-stack development and have experience across the entire development lifecycle.',
+  skills TEXT DEFAULT 'JavaScript, TypeScript, React, Node.js, Python, FastAPI, PostgreSQL, ChromaDB, Supabase, Next.js, TailwindCSS',
+  experience TEXT DEFAULT '5+ years of experience in full-stack development, with a focus on building AI-powered applications and responsive web interfaces.',
+  interests TEXT DEFAULT 'AI, machine learning, web development, reading sci-fi, hiking',
+  name TEXT DEFAULT 'New User',
+  location TEXT DEFAULT 'Worldwide',
+  projects TEXT DEFAULT 'AI-powered portfolio system, real-time analytics dashboard, natural language processing application',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(user_id)
@@ -144,8 +147,25 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON messages TO authenticated;
 CREATE OR REPLACE FUNCTION public.handle_new_user() 
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (user_id)
-  VALUES (NEW.id);
+  INSERT INTO public.profiles (
+    user_id,
+    bio,
+    skills,
+    experience,
+    interests,
+    name,
+    location,
+    projects
+  ) VALUES (
+    NEW.id,
+    'I am a software engineer with a passion for building AI and web applications. I specialize in full-stack development and have experience across the entire development lifecycle.',
+    'JavaScript, TypeScript, React, Node.js, Python, FastAPI, PostgreSQL, ChromaDB, Supabase, Next.js, TailwindCSS',
+    '5+ years of experience in full-stack development, with a focus on building AI-powered applications and responsive web interfaces.',
+    'AI, machine learning, web development, reading sci-fi, hiking',
+    COALESCE(NEW.raw_user_meta_data->>'full_name', 'New User'),
+    'Worldwide',
+    'AI-powered portfolio system, real-time analytics dashboard, natural language processing application'
+  );
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

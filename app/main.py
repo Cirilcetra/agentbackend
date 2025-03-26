@@ -320,6 +320,10 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
                 target_user_id=target_user_id
             )
             
+            # Log detailed info about the history result
+            logging.info(f"History result type: {type(history_result)}")
+            logging.info(f"History result length: {len(history_result) if isinstance(history_result, list) else 'not a list'}")
+            
             # Ensure history_result is a list
             if not isinstance(history_result, list):
                 logging.error(f"Unexpected history result type: {type(history_result)}")
@@ -327,7 +331,7 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
                 
             logging.info(f"Successfully retrieved {len(history_result)} history items")
         except Exception as get_history_error:
-            logging.error(f"Error retrieving chat history from database: {get_history_error}")
+            logging.error(f"Error retrieving chat history from database: {get_history_error}", exc_info=True)
             # Return empty history instead of failing
             return models.ChatHistoryResponse(
                 history=[],
@@ -340,12 +344,17 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
         formatted_history = []
         
         # Process each history item
-        for item in history_result:
+        for i, item in enumerate(history_result):
             if not isinstance(item, dict):
-                logging.warning(f"Skipping invalid history item type: {type(item)}")
+                logging.warning(f"Skipping invalid history item type at index {i}: {type(item)}")
                 continue
                 
             try:
+                # Log item details for debugging (just the first few items)
+                if i < 2:
+                    logging.info(f"Item {i} keys: {list(item.keys())}")
+                    logging.info(f"Item {i} values sample: id={item.get('id', 'unknown')}, message={item.get('message', 'unknown')[:20]}")
+                
                 # Create ChatHistoryItem with safe defaults
                 history_item = models.ChatHistoryItem(
                     id=item.get("id", str(uuid.uuid4())),
@@ -359,7 +368,7 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
                 )
                 formatted_history.append(history_item)
             except Exception as format_error:
-                logging.error(f"Error formatting history item: {format_error}, item: {item}")
+                logging.error(f"Error formatting history item at index {i}: {format_error}", exc_info=True)
                 # Skip this item and continue to the next
                 continue
         
@@ -370,7 +379,7 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
                 reverse=True  # newest first
             )
         except Exception as sort_error:
-            logging.error(f"Error sorting history: {sort_error}")
+            logging.error(f"Error sorting history: {sort_error}", exc_info=True)
         
         # Create the response
         response = models.ChatHistoryResponse(

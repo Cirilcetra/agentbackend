@@ -5,6 +5,8 @@ import time
 import json
 import uuid
 import logging
+import copy
+import re
 
 # Load environment variables
 load_dotenv()
@@ -52,10 +54,9 @@ in_memory_messages = {}
 def get_profile_data(user_id=None):
     """
     Get the profile data from Supabase for a specific user
-    If user_id is not provided, return default profile
     
     Args:
-        user_id (str): Optional user ID to retrieve profile for
+        user_id (str): User ID from auth.users.id
         
     Returns:
         dict: Profile data dictionary with user information
@@ -64,13 +65,16 @@ def get_profile_data(user_id=None):
         if not user_id:
             logging.warning("No user_id provided to get_profile_data, using default profile data")
             # Return a copy of the default in-memory profile to avoid modification
-            return in_memory_profile.copy()
+            default_profile = in_memory_profile.copy()
+            default_profile['is_default'] = True
+            return default_profile
             
         if supabase is None:
             logging.warning("Supabase client not available, using default profile with user_id")
             # Return a copy of the default profile with the user_id added
             profile = in_memory_profile.copy()
             profile['user_id'] = user_id
+            profile['is_default'] = True
             return profile
             
         # Query for the specific user's profile
@@ -80,13 +84,25 @@ def get_profile_data(user_id=None):
         if response.data and len(response.data) > 0:
             logging.info(f"Found profile for user: {user_id}")
             profile = response.data[0]
+            profile['is_default'] = False  # Indicate this is a real profile
             
-            # Ensure all required fields exist
-            profile_fields = ['bio', 'skills', 'experience', 'interests', 'name', 'location', 'projects']
-            for field in profile_fields:
+            # Ensure all required fields exist with default values if missing
+            profile_fields = {
+                'bio': in_memory_profile.get('bio', 'I am a software engineer with a passion for building AI and web applications.'),
+                'skills': in_memory_profile.get('skills', 'JavaScript, TypeScript, React, Node.js, Python'),
+                'experience': in_memory_profile.get('experience', '5+ years of experience in software development'),
+                'interests': in_memory_profile.get('interests', 'AI, web development, reading'),
+                'name': 'New User',
+                'location': 'Worldwide',
+                'projects': in_memory_profile.get('projects', 'AI-powered applications')
+            }
+            
+            # Apply defaults for any missing fields
+            for field, default_value in profile_fields.items():
                 if field not in profile or profile[field] is None:
                     # Copy from default profile for missing fields
-                    profile[field] = in_memory_profile.get(field, '')
+                    profile[field] = default_value
+                    logging.info(f"Applied default value for missing field: {field}")
             
             # Initialize empty project list if not present
             if 'project_list' not in profile:
@@ -104,11 +120,41 @@ def get_profile_data(user_id=None):
                     
             return profile
         else:
-            logging.warning(f"No profile found for user: {user_id}, using default profile")
-            # If no profile found for this user, create a copy of the default with the user_id set
+            logging.warning(f"No profile found for user: {user_id}, creating a new default profile")
+            # If no profile found for this user, create one in Supabase
+            try:
+                # Create a new profile for this user
+                new_profile = {
+                    'user_id': user_id,
+                    'bio': in_memory_profile.get('bio', 'I am a software engineer with a passion for building AI and web applications.'),
+                    'skills': in_memory_profile.get('skills', 'JavaScript, TypeScript, React, Node.js, Python'),
+                    'experience': in_memory_profile.get('experience', '5+ years of experience in software development'),
+                    'interests': in_memory_profile.get('interests', 'AI, web development, reading'),
+                    'name': 'New User',
+                    'location': 'Worldwide',
+                    'projects': in_memory_profile.get('projects', 'AI-powered applications'),
+                    'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                    'updated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                }
+                
+                create_response = supabase.table("profiles").insert(new_profile).execute()
+                
+                if create_response.data and len(create_response.data) > 0:
+                    logging.info(f"Created new profile for user: {user_id}")
+                    created_profile = create_response.data[0]
+                    created_profile['project_list'] = []
+                    created_profile['is_default'] = False
+                    return created_profile
+            except Exception as create_error:
+                logging.error(f"Error creating new profile: {create_error}")
+            
+            # If creation failed, return a default profile with the user_id
             default_profile = in_memory_profile.copy()
             default_profile['user_id'] = user_id
             default_profile['project_list'] = []
+            default_profile['is_default'] = True
+            default_profile['name'] = 'New User'
+            default_profile['location'] = 'Worldwide'
             return default_profile
     except Exception as e:
         logging.error(f"Error fetching profile data: {e}")
@@ -117,6 +163,9 @@ def get_profile_data(user_id=None):
         if user_id:
             default_profile['user_id'] = user_id
         default_profile['project_list'] = []
+        default_profile['is_default'] = True
+        default_profile['name'] = 'New User'
+        default_profile['location'] = 'Worldwide'
         return default_profile
 
 def save_profile_to_file():
@@ -131,61 +180,91 @@ def save_profile_to_file():
 def update_profile_data(data, user_id=None):
     """
     Update the profile data in Supabase for a specific user
+    
+    Args:
+        data (dict): Profile data to update
+        user_id (str): User ID from auth.users.id
+        
+    Returns:
+        dict: Updated profile data or None on error
     """
     try:
         if not user_id:
-            print("Error: user_id is required to update profile data")
+            logging.error("Error: user_id is required to update profile data")
             return None
             
-        if supabase:
-            print(f"Updating profile for user: {user_id}")
+        if supabase is None:
+            logging.warning("Supabase client not available, using in-memory storage")
+            # Fallback to in-memory update
+            for key, value in data.items():
+                if key != 'id':  # Don't overwrite id
+                    in_memory_profile[key] = value
             
-            # Check if profile exists for this user
-            response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+            # Save updated profile to file for persistence
+            save_profile_to_file()
             
-            # Prepare profile data (exclude project_list which is stored separately)
-            profile_data = {k: v for k, v in data.items() if k != 'project_list' and k != 'id'}
-            profile_data['user_id'] = user_id
-            profile_data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-            
-            if response.data and len(response.data) > 0:
-                # Update existing profile
-                existing_profile = response.data[0]
-                profile_id = existing_profile['id']
-                
-                response = supabase.table("profiles").update(profile_data).eq("id", profile_id).execute()
-                print(f"Updated profile with ID: {profile_id}")
-            else:
-                # Create new profile
-                response = supabase.table("profiles").insert(profile_data).execute()
-                print(f"Created new profile for user: {user_id}")
-            
-            # Handle project_list if provided
-            if 'project_list' in data and data['project_list']:
-                for project in data['project_list']:
-                    if 'id' in project and project['id']:
-                        # Update existing project
-                        update_project(project['id'], project, user_id)
-                    else:
-                        # Add new project
-                        add_project(project, user_id)
-            
-            # Get the updated profile to return
-            updated_profile = get_profile_data(user_id)
+            # Return a copy of the updated profile
+            updated_profile = in_memory_profile.copy()
+            updated_profile['user_id'] = user_id
+            updated_profile['is_default'] = True
             return updated_profile
+            
+        logging.info(f"Updating profile for user: {user_id}")
         
-        # Fallback to in-memory update if Supabase fails
-        print("Supabase is not available, using in-memory storage")
-        for key, value in data.items():
-            if key != 'id':  # Don't overwrite id
-                in_memory_profile[key] = value
+        # Check if profile exists for this user
+        response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+        
+        # Prepare profile data (exclude project_list which is stored separately)
+        profile_data = {k: v for k, v in data.items() if k != 'project_list' and k != 'id' and k != 'is_default'}
+        profile_data['user_id'] = user_id
+        profile_data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        
+        if response.data and len(response.data) > 0:
+            # Update existing profile
+            existing_profile = response.data[0]
+            profile_id = existing_profile['id']
+            
+            logging.info(f"Updating existing profile with ID: {profile_id}")
+            update_response = supabase.table("profiles").update(profile_data).eq("id", profile_id).execute()
+            
+            if not (update_response.data and len(update_response.data) > 0):
+                logging.error(f"Failed to update profile: {update_response}")
+                return None
                 
-        # Save updated profile to file for persistence
-        save_profile_to_file()
+            logging.info(f"Profile updated successfully")
+        else:
+            # Create new profile
+            logging.info(f"Creating new profile for user: {user_id}")
+            
+            # Add created_at for new profiles
+            profile_data['created_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            
+            create_response = supabase.table("profiles").insert(profile_data).execute()
+            
+            if not (create_response.data and len(create_response.data) > 0):
+                logging.error(f"Failed to create profile: {create_response}")
+                return None
+                
+            logging.info(f"Profile created successfully")
         
-        return data
+        # Handle project_list if provided
+        if 'project_list' in data and data['project_list']:
+            logging.info(f"Updating {len(data['project_list'])} projects")
+            for project in data['project_list']:
+                if 'id' in project and project['id']:
+                    # Update existing project
+                    update_project(project['id'], project, user_id)
+                else:
+                    # Add new project
+                    add_project(project, user_id)
+        
+        # Get the updated profile to return
+        updated_profile = get_profile_data(user_id)
+        updated_profile['is_default'] = False  # This is now a real profile
+        return updated_profile
+        
     except Exception as e:
-        print(f"Error updating profile: {e}")
+        logging.error(f"Error updating profile: {e}")
         return None
 
 def add_project(project_data, user_id=None):
@@ -329,9 +408,9 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         message (str): The message to log
         sender (str): The sender of the message (user, ai, system)
         response (str): Optional response from the AI
-        visitor_id (str): Optional visitor ID
+        visitor_id (str): Optional visitor ID for anonymous visitors
         visitor_name (str): Optional visitor name
-        target_user_id (str): Optional target user ID
+        target_user_id (str): User ID from auth.users.id
         chatbot_id (str): Optional chatbot ID
         
     Returns:
@@ -359,7 +438,7 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
                 "sender": sender,
                 "visitor_id": visitor_id,
                 "visitor_name": visitor_name,
-                "target_user_id": target_user_id,
+                "user_id": target_user_id,
                 "chatbot_id": chatbot_id,
                 "timestamp": timestamp
             }
@@ -373,10 +452,7 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
             
             return True
         
-        # IMPORTANT: Skip chatbot handling entirely to avoid RLS issues
-        # We'll directly save the message with just the fields we need
-        
-        # Prepare minimal message data required for the messages table
+        # Create a message record - IMPORTANT: Needs to comply with RLS policies
         message_data = {
             "message": message,
             "sender": sender,
@@ -387,118 +463,206 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         if visitor_name:
             message_data["visitor_name"] = visitor_name
             
+        # For authenticated users - crucial for RLS
         if target_user_id:
             message_data["user_id"] = target_user_id
-            
+        
+        # Add response if available
         if response:
             message_data["response"] = response
         
-        # Use provided chatbot_id only if it was directly passed
+        # Only add chatbot_id if a valid one is provided
         if chatbot_id:
             message_data["chatbot_id"] = chatbot_id
-            
-        # Insert into Supabase
+        
+        # For an authenticated user, first check if they have a public chatbot
+        # This helps with the RLS policy for messages
+        if target_user_id and not chatbot_id:
+            try:
+                # Find a public chatbot for this user
+                public_chatbot_query = supabase.table("chatbots") \
+                    .select("id") \
+                    .eq("user_id", target_user_id) \
+                    .eq("is_public", True) \
+                    .limit(1) \
+                    .execute()
+                    
+                if public_chatbot_query.data and len(public_chatbot_query.data) > 0:
+                    message_data["chatbot_id"] = public_chatbot_query.data[0]["id"]
+                    logging.info(f"Using public chatbot {message_data['chatbot_id']} for message")
+            except Exception as chatbot_error:
+                logging.error(f"Error finding public chatbot: {chatbot_error}")
+        
+        # Insert message into Supabase
         try:
+            logging.info(f"Inserting message into Supabase: {message_data}")
             result = supabase.table("messages").insert(message_data).execute()
+            
             if hasattr(result, 'data') and len(result.data) > 0:
                 logging.info(f"Successfully logged chat message to Supabase: {result.data[0].get('id', 'unknown')}")
                 return True
             else:
                 logging.warning(f"Unexpected result format when logging message: {result}")
                 return False
+                
         except Exception as insert_error:
             logging.error(f"Error logging chat message: {insert_error}")
             
-            # Try with just the basic fields as a fallback (absolute minimum)
-            try:
-                basic_message = {
-                    "message": message,
-                    "sender": sender,
-                    "visitor_id": visitor_id
-                }
-                basic_result = supabase.table("messages").insert(basic_message).execute()
-                if hasattr(basic_result, 'data') and len(basic_result.data) > 0:
-                    logging.info(f"Logged chat message with minimal fields: {basic_result.data[0].get('id', 'unknown')}")
-                    return True
-                return False
-            except Exception as basic_error:
-                logging.error(f"Error logging even basic message: {basic_error}")
-                return False
+            # If the issue is RLS policy, try inserting with minimal required fields
+            if "'42501'" in str(insert_error) or "violates row-level security policy" in str(insert_error):
+                logging.warning("RLS policy violation, trying with minimal fields")
+                
+                # For anonymous users, try without user_id and chatbot_id
+                if not target_user_id:
+                    try:
+                        minimal_data = {
+                            "message": message,
+                            "sender": sender,
+                            "visitor_id": visitor_id
+                        }
+                        
+                        if response:
+                            minimal_data["response"] = response
+                            
+                        anon_result = supabase.table("messages").insert(minimal_data).execute()
+                        if hasattr(anon_result, 'data') and len(anon_result.data) > 0:
+                            logging.info(f"Successfully logged anonymous message with minimal fields")
+                            return True
+                    except Exception as anon_error:
+                        logging.error(f"Failed even with minimal anonymous fields: {anon_error}")
+                
+                # For authenticated users, we need to ensure RLS compliance
+                elif target_user_id:
+                    try:
+                        # Adjust the policy in Supabase to allow this
+                        auth_minimal_data = {
+                            "message": message,
+                            "sender": sender,
+                            "visitor_id": visitor_id,
+                            "user_id": target_user_id
+                        }
+                        
+                        if response:
+                            auth_minimal_data["response"] = response
+                            
+                        auth_result = supabase.table("messages").insert(auth_minimal_data).execute()
+                        if hasattr(auth_result, 'data') and len(auth_result.data) > 0:
+                            logging.info(f"Successfully logged authenticated message with minimal fields")
+                            return True
+                    except Exception as auth_error:
+                        logging.error(f"Failed even with minimal authenticated fields: {auth_error}")
+            
+            # If all attempts failed, log to in-memory as fallback
+            logging.warning("Falling back to in-memory storage due to Supabase errors")
+            
+            if visitor_id not in in_memory_messages:
+                in_memory_messages[visitor_id] = []
+                
+            fallback_data = {
+                "id": str(uuid.uuid4()),
+                "message": message,
+                "sender": sender,
+                "visitor_id": visitor_id,
+                "visitor_name": visitor_name,
+                "user_id": target_user_id,
+                "timestamp": timestamp
+            }
+            
+            if response:
+                fallback_data["response"] = response
+                
+            in_memory_messages[visitor_id].append(fallback_data)
+            return False  # Still return False as the database insert failed
     
     except Exception as e:
         logging.error(f"Error in log_chat_message: {e}")
         return False
 
-def get_chat_history(limit=50, visitor_id=None, target_user_id=None):
+def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=None):
     """
-    Get chat history for a specific visitor or user
-    If target_user_id is provided, get messages associated with that user's chatbot
+    Get chat history for a visitor and target user
+    
+    Args:
+        limit (int): Maximum number of messages to return
+        visitor_id (str): Optional visitor ID to filter by
+        target_user_id (str): Optional target user ID to filter by (auth.users.id)
+        chatbot_id (str): Optional chatbot ID to filter by
+        
+    Returns:
+        list: List of chat history items
     """
     try:
-        if supabase:
-            # Build query based on provided filters
-            query = supabase.table("messages").select("*")
+        if supabase is None:
+            logging.warning("Supabase client not initialized, using in-memory messages")
+            history = []
             
-            if target_user_id:
-                # Get all messages from this user's chatbots
-                chatbot_response = supabase.table("chatbots").select("id").eq("user_id", target_user_id).execute()
+            # Filter messages from in_memory_messages matching the visitor_id
+            if visitor_id and visitor_id in in_memory_messages:
+                # Make a deep copy to avoid modifying the original
+                history = copy.deepcopy(in_memory_messages[visitor_id])
                 
-                if chatbot_response.data and len(chatbot_response.data) > 0:
-                    chatbot_ids = [chatbot["id"] for chatbot in chatbot_response.data]
-                    
-                    # Filter by user_id directly or by chatbot_id
-                    query = query.or_(f"user_id.eq.{target_user_id},chatbot_id.in.({','.join(chatbot_ids)})")
-                else:
-                    # If no chatbots found, just filter by user_id
-                    query = query.eq("user_id", target_user_id)
+                # Sort messages by timestamp
+                history = sorted(
+                    history,
+                    key=lambda x: x.get("timestamp", "") if isinstance(x, dict) else "",
+                    reverse=True  # newest messages first
+                )
                 
-            if visitor_id:
-                # Further filter by visitor_id if provided
-                query = query.eq("visitor_id", visitor_id)
+                # Apply limit
+                history = history[:limit]
                 
-            # Order and limit
-            query = query.order("created_at", desc=True).limit(limit)
+            return history
             
-            response = query.execute()
-            
-            if response.data:
-                print(f"Retrieved {len(response.data)} chat messages")
-                # Convert timestamps and return in chronological order
-                messages = sorted(response.data, key=lambda x: x.get('created_at', ''))
-                return {
-                    "count": len(messages),
-                    "history": messages
-                }
-            
-            return {
-                "count": 0,
-                "history": []
-            }
+        logging.info(f"Getting chat history from Supabase: visitor_id={visitor_id}, target_user_id={target_user_id}, limit={limit}")
         
-        # Fallback to in-memory storage
-        print("Supabase not available, retrieving from in-memory storage")
-        filtered_messages = in_memory_messages
+        # Build the query based on available parameters
+        query = supabase.table("messages").select("*")
         
-        if target_user_id:
-            filtered_messages = [msg for msg in filtered_messages if msg.get('user_id') == target_user_id]
-            
+        # Add filters if provided
         if visitor_id:
-            filtered_messages = [msg for msg in filtered_messages if msg.get('visitor_id') == visitor_id]
+            query = query.eq("visitor_id", visitor_id)
             
-        # Sort and limit
-        filtered_messages = sorted(filtered_messages, key=lambda x: x.get('timestamp', ''))
-        limited_messages = filtered_messages[-limit:] if len(filtered_messages) > limit else filtered_messages
+        if target_user_id:
+            query = query.eq("user_id", target_user_id)
+            
+        if chatbot_id:
+            query = query.eq("chatbot_id", chatbot_id)
+            
+        # Add ordering and limit
+        query = query.order("created_at", desc=True).limit(limit)
         
-        return {
-            "count": len(limited_messages),
-            "history": limited_messages
-        }
+        # Execute the query
+        results = query.execute()
+        
+        # Extract and format the data
+        history = []
+        if hasattr(results, 'data'):
+            if isinstance(results.data, list):
+                history = results.data
+                
+                # Convert timestamps to string format for JSON serialization
+                for item in history:
+                    if isinstance(item, dict):
+                        # Ensure timestamp is in string format
+                        if "created_at" in item and item["created_at"]:
+                            item["timestamp"] = str(item["created_at"])
+                        
+                # Add log for troubleshooting
+                logging.info(f"Found {len(history)} history items")
+                
+                for i, item in enumerate(history[:2]):  # Log first two items for debugging
+                    logging.info(f"History item {i}: {type(item)}, keys: {item.keys() if isinstance(item, dict) else 'not a dict'}")
+            else:
+                logging.warning(f"Unexpected results.data type: {type(results.data)}")
+        else:
+            logging.warning(f"results has no 'data' attribute")
+        
+        return history
+            
     except Exception as e:
-        print(f"Error retrieving chat history: {e}")
-        return {
-            "count": 0,
-            "history": []
-        }
+        logging.error(f"Error fetching chat history: {e}")
+        # Return empty history on error
+        return []
 
 def verify_admin_login(username, password):
     """
