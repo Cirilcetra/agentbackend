@@ -870,4 +870,55 @@ def is_admin_user(user_id=None, email=None):
         return False
     except Exception as e:
         print(f"Error checking admin user status: {e}")
-        return False 
+        return False
+
+def update_profile_in_memory_only(data, user_id=None):
+    """
+    Update only the in-memory profile and save to file, bypassing Supabase
+    This is useful when RLS policies prevent database updates
+    
+    Args:
+        data (dict): Profile data to update
+        user_id (str): User ID from auth.users.id
+        
+    Returns:
+        dict: Updated profile data with success status
+    """
+    try:
+        # Make a local copy to avoid modifying the original
+        profile_data = data.copy()
+        
+        # Convert empty strings to None
+        for key, value in profile_data.items():
+            if isinstance(value, str) and value.strip() == '':
+                profile_data[key] = None
+                logging.info(f"Converting empty string to NULL for field: {key}")
+        
+        # Update in-memory profile with new values
+        for key, value in profile_data.items():
+            if key != 'id' and key != 'project_list' and key != 'is_default':
+                # Allow explicit NULL updates by removing the None check
+                in_memory_profile[key] = value
+                logging.info(f"Updated {key} in memory with value: {value}")
+        
+        # Add user_id if provided
+        if user_id:
+            in_memory_profile['user_id'] = user_id
+            
+        # Update timestamp
+        in_memory_profile['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        
+        # Save to file for persistence
+        save_profile_to_file()
+        logging.info("Saved updated profile to file")
+        
+        # Return a copy of the updated profile
+        updated_profile = in_memory_profile.copy()
+        if user_id:
+            updated_profile['user_id'] = user_id
+        updated_profile['is_default'] = False
+        
+        return {"success": True, "profile": updated_profile, "message": "Profile updated successfully (in-memory only)"}
+    except Exception as e:
+        logging.error(f"Error updating in-memory profile: {e}", exc_info=True)
+        return {"success": False, "profile": None, "message": f"Error updating profile: {str(e)}"} 

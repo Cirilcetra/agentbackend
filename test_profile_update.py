@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get the environment variables
-API_URL = os.getenv("API_URL", "http://localhost:8080")
+PORT = os.getenv("PORT", "8080")
+HOST = os.getenv("HOST", "0.0.0.0")
+API_URL = os.getenv("API_URL", f"http://localhost:{PORT}")
 TEST_USER_ID = os.getenv("TEST_USER_ID", "754093fa-dca3-4ec8-892c-b278e3207dc1")  # Using the test user ID
 
 def test_profile_update():
@@ -24,36 +26,44 @@ def test_profile_update():
     }
     
     print(f"Updating profile with test data: {profile_data}")
+    print(f"Sending request to: {API_URL}/profile?user_id={TEST_USER_ID}")
     
-    # Make the request to update the profile
-    response = requests.post(
-        f"{API_URL}/profile?user_id={TEST_USER_ID}",
-        json=profile_data
-    )
-    
-    # Check the response
-    if response.status_code == 200:
-        result = response.json()
-        print("Profile update successful!")
-        print(f"Response: {json.dumps(result, indent=2)}")
+    try:
+        # Make the request to update the profile
+        response = requests.post(
+            f"{API_URL}/profile?user_id={TEST_USER_ID}",
+            json=profile_data,
+            timeout=10  # Add timeout to avoid hanging
+        )
         
-        # Verify updated fields
-        if "profile" in result:
-            profile = result["profile"]
-            for key, value in profile_data.items():
-                if key in profile:
-                    print(f"Checking field '{key}':")
-                    print(f"  Expected: {value}")
-                    print(f"  Actual: {profile[key]}")
-                    if profile[key] == value:
-                        print("  ✅ Match")
+        # Check the response
+        if response.status_code == 200:
+            result = response.json()
+            print("Profile update successful!")
+            print(f"Response: {json.dumps(result, indent=2)}")
+            
+            # Verify updated fields
+            if "profile" in result:
+                profile = result["profile"]
+                for key, value in profile_data.items():
+                    if key in profile:
+                        print(f"Checking field '{key}':")
+                        print(f"  Expected: {value}")
+                        print(f"  Actual: {profile[key]}")
+                        if profile[key] == value:
+                            print("  ✅ Match")
+                        else:
+                            print("  ❌ Mismatch")
                     else:
-                        print("  ❌ Mismatch")
-                else:
-                    print(f"❌ Field '{key}' missing from response")
-    else:
-        print(f"Error: HTTP {response.status_code}")
-        print(response.text)
+                        print(f"❌ Field '{key}' missing from response")
+        else:
+            print(f"Error: HTTP {response.status_code}")
+            print(response.text)
+    except requests.exceptions.ConnectionError as ce:
+        print(f"Connection error: {ce}")
+        print("Is the server running? Make sure the API is accessible at:", API_URL)
+    except Exception as e:
+        print(f"Error during request: {e}")
 
 def test_empty_profile_update():
     """Test updating a profile with empty fields to check if they're properly nullified"""
@@ -67,53 +77,72 @@ def test_empty_profile_update():
     }
     
     print(f"Updating profile with empty fields: {profile_data}")
+    print(f"Sending request to: {API_URL}/profile?user_id={TEST_USER_ID}")
     
-    # Make the request to update the profile
-    response = requests.post(
-        f"{API_URL}/profile?user_id={TEST_USER_ID}",
-        json=profile_data
-    )
-    
-    # Check the response
-    if response.status_code == 200:
-        result = response.json()
-        print("Empty fields update successful!")
-        print(f"Response: {json.dumps(result, indent=2)}")
+    try:
+        # Make the request to update the profile
+        response = requests.post(
+            f"{API_URL}/profile?user_id={TEST_USER_ID}",
+            json=profile_data,
+            timeout=10  # Add timeout to avoid hanging
+        )
         
-        # Verify fields are properly handled
-        if "profile" in result:
-            profile = result["profile"]
-            for key, value in profile_data.items():
-                if key in profile:
-                    print(f"Checking field '{key}':")
-                    print(f"  Input: '{value}'")
-                    print(f"  Response: '{profile[key]}'")
-                    
-                    # Empty strings should be converted to None/null
-                    if value.strip() == "" and profile[key] is None:
-                        print("  ✅ Empty string correctly converted to null")
-                    elif value.strip() != "" and profile[key] == value:
-                        print("  ✅ Non-empty value preserved correctly")
+        # Check the response
+        if response.status_code == 200:
+            result = response.json()
+            print("Empty fields update successful!")
+            print(f"Response: {json.dumps(result, indent=2)}")
+            
+            # Verify fields are properly handled
+            if "profile" in result:
+                profile = result["profile"]
+                for key, value in profile_data.items():
+                    if key in profile:
+                        print(f"Checking field '{key}':")
+                        print(f"  Input: '{value}'")
+                        print(f"  Response: '{profile[key]}'")
+                        
+                        # Empty strings should be converted to None/null
+                        if value.strip() == "" and profile[key] is None:
+                            print("  ✅ Empty string correctly converted to null")
+                        elif value.strip() != "" and profile[key] == value:
+                            print("  ✅ Non-empty value preserved correctly")
+                        else:
+                            print("  ❌ Field not handled correctly")
                     else:
-                        print("  ❌ Field not handled correctly")
-                else:
-                    print(f"❌ Field '{key}' missing from response")
-    else:
-        print(f"Error: HTTP {response.status_code}")
-        print(response.text)
+                        print(f"❌ Field '{key}' missing from response")
+        else:
+            print(f"Error: HTTP {response.status_code}")
+            print(response.text)
+    except requests.exceptions.ConnectionError as ce:
+        print(f"Connection error: {ce}")
+        print("Is the server running? Make sure the API is accessible at:", API_URL)
+    except Exception as e:
+        print(f"Error during request: {e}")
 
 def get_profile():
     """Get the current profile"""
     
-    response = requests.get(f"{API_URL}/profile?user_id={TEST_USER_ID}")
+    print(f"Getting profile from: {API_URL}/profile?user_id={TEST_USER_ID}")
     
-    if response.status_code == 200:
-        profile = response.json()
-        print("Current profile:")
-        print(json.dumps(profile, indent=2))
-    else:
-        print(f"Error: HTTP {response.status_code}")
-        print(response.text)
+    try:
+        response = requests.get(
+            f"{API_URL}/profile?user_id={TEST_USER_ID}",
+            timeout=10  # Add timeout to avoid hanging
+        )
+        
+        if response.status_code == 200:
+            profile = response.json()
+            print("Current profile:")
+            print(json.dumps(profile, indent=2))
+        else:
+            print(f"Error: HTTP {response.status_code}")
+            print(response.text)
+    except requests.exceptions.ConnectionError as ce:
+        print(f"Connection error: {ce}")
+        print("Is the server running? Make sure the API is accessible at:", API_URL)
+    except Exception as e:
+        print(f"Error during request: {e}")
 
 if __name__ == "__main__":
     print(f"Testing against API at: {API_URL}")
