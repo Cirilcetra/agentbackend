@@ -70,7 +70,7 @@ async def profile(user_id: Optional[str] = None):
     """Get profile data"""
     try:
         logging.info(f"Getting profile data")
-        profile_data = get_profile_data()
+        profile_data = get_profile_data(user_id=user_id)
         return profile_data
     except Exception as e:
         logging.error(f"Error getting profile data: {e}")
@@ -98,10 +98,10 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
         profile_dict = profile_data.dict()
         
         # Update profile data in the database
-        updated_profile = update_profile_data(profile_dict)
+        updated_profile = update_profile_data(profile_dict, user_id=user_id)
         
         # Add profile data to vector database
-        add_profile_to_vector_db(updated_profile)
+        add_profile_to_vector_db(updated_profile, user_id=user_id)
         
         return {"message": "Profile updated successfully", "profile": updated_profile}
     except Exception as e:
@@ -132,8 +132,8 @@ async def chat(chat_request: models.ChatRequest):
         logging.info(f"User message: {message[:50]}...")
         
         # Get profile data
-        profile_data = get_profile_data()
-        logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}") 
+        profile_data = get_profile_data(user_id=target_user_id)
+        logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}")
         
         # Query vector database for relevant information including conversation history
         logging.info(f"Querying vector DB for relevant context and conversation history")
@@ -211,30 +211,40 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
         logging.info(f"Getting chat history for visitor: {visitor_id}, target: {target_user_id}, limit: {limit}")
         
         # Get chat history
-        history = get_chat_history(
+        history_result = get_chat_history(
             limit=limit,
             visitor_id=visitor_id,
             target_user_id=target_user_id
         )
         
+        # Extract the history list from the result
+        if isinstance(history_result, dict) and 'history' in history_result:
+            history = history_result['history']
+        else:
+            history = history_result if isinstance(history_result, list) else []
+        
         logging.info(f"Retrieved {len(history)} chat history entries")
         if len(history) > 0:
-            logging.info(f"First message: {history[0].get('message', 'N/A')[:30]}...")
+            logging.info(f"First message: {history[0].get('message', 'N/A')[:30] if isinstance(history[0], dict) else 'Not a dict'}...")
         else:
             logging.info("No chat history found")
         
         # Convert to ChatHistoryResponse format for better compatibility
         formatted_history = []
         for item in history:
+            if not isinstance(item, dict):
+                logging.warning(f"Unexpected item type in history: {type(item)}")
+                continue
+                
             formatted_history.append(models.ChatHistoryItem(
-                id=item["id"],
-                message=item["message"],
-                sender=item["sender"],
+                id=item.get("id", "unknown"),
+                message=item.get("message", ""),
+                sender=item.get("sender", "unknown"),
                 response=item.get("response"),
-                visitor_id=item["visitor_id"],
+                visitor_id=item.get("visitor_id", "unknown"),
                 visitor_name=item.get("visitor_name"),
                 target_user_id=item.get("target_user_id"),
-                timestamp=item["timestamp"]
+                timestamp=item.get("timestamp", "")
             ))
         
         response = models.ChatHistoryResponse(
