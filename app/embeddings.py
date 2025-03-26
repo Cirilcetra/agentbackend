@@ -451,98 +451,201 @@ def add_conversation_to_vector_db(message, response, visitor_id, message_id=None
 def query_vector_db(query, n_results=3, user_id=None, visitor_id=None, include_conversation=True):
     """
     Query the vector database for relevant content
-    Now supports user-specific collections
+    
+    Args:
+        query (str): The query text
+        n_results (int): Number of results to return
+        user_id (str): Optional user ID for user-specific collections
+        visitor_id (str): Optional visitor ID for conversation history
+        include_conversation (bool): Whether to include conversation history in results
+    
+    Returns:
+        list: List of formatted search results with content, metadata, and relevance
     """
     try:
-        # Use the user_id in collection name if provided
-        collection_name = f"portfolio_data_{user_id}" if user_id else "portfolio_data"
-        print(f"Querying collection: {collection_name}")
+        formatted_results = []  # Initialize an empty list for results
         
-        # Get or create the collection (should exist already)
-        try:
-            collection = chroma_client.get_or_create_collection(
-                name=collection_name,
-                embedding_function=openai_ef
-            )
-        except Exception as coll_error:
-            print(f"Error getting collection {collection_name}: {coll_error}")
-            print("Falling back to default collection")
-            collection = chroma_client.get_or_create_collection(
-                name="portfolio_data",
-                embedding_function=openai_ef
-            )
-        
-        # Query for relevant content
-        query_filter = {}
+        # First, try the user-specific collection if a user_id is provided
         if user_id:
-            query_filter = {"user_id": {"$eq": user_id}}
-            
-        results = collection.query(
-            query_texts=[query],
-            n_results=n_results,
-            where=query_filter
-        )
-        
-        # Format results
-        formatted_results = []
-        if results["documents"] and len(results["documents"]) > 0:
-            documents = results["documents"][0]
-            metadatas = results["metadatas"][0]
-            distances = results["distances"][0]
-            
-            for i in range(len(documents)):
-                formatted_results.append({
-                    "content": documents[i],
-                    "metadata": metadatas[i],
-                    "distance": distances[i]
-                })
-        
-        print(f"Found {len(formatted_results)} relevant documents in vector DB")
-                
-        # Include conversation history if requested
-        if include_conversation and visitor_id:
-            # Try to get or create conversation collection
-            conv_collection_name = f"conversation_{user_id}" if user_id else "conversation"
-            print(f"Querying conversation collection: {conv_collection_name}")
+            collection_name = f"portfolio_data_{user_id}"
+            logging.info(f"Querying user-specific collection: {collection_name}")
             
             try:
-                conv_collection = chroma_client.get_or_create_collection(
-                    name=conv_collection_name,
+                collection = chroma_client.get_or_create_collection(
+                    name=collection_name,
                     embedding_function=openai_ef
                 )
                 
-                # Filter for current visitor conversations
-                conv_filter = {"visitor_id": {"$eq": visitor_id}}
-                if user_id:
-                    conv_filter["user_id"] = {"$eq": user_id}
-                    
-                conv_results = conv_collection.query(
+                # Query with user_id filter
+                user_results = collection.query(
                     query_texts=[query],
-                    n_results=2,  # Limit to just a few most relevant conversations
-                    where=conv_filter
+                    n_results=n_results
                 )
                 
-                # Add conversation results
-                if conv_results["documents"] and len(conv_results["documents"]) > 0:
-                    conv_documents = conv_results["documents"][0]
-                    conv_metadatas = conv_results["metadatas"][0]
-                    conv_distances = conv_results["distances"][0]
+                # Process results if they exist
+                if (user_results.get("documents") and 
+                    isinstance(user_results["documents"], list) and 
+                    len(user_results["documents"]) > 0 and 
+                    isinstance(user_results["documents"][0], list)):
                     
-                    for i in range(len(conv_documents)):
+                    documents = user_results["documents"][0]
+                    metadatas = user_results.get("metadatas", [[{}] * len(documents)])[0]
+                    distances = user_results.get("distances", [[1.0] * len(documents)])[0]
+                    
+                    # Format results
+                    for i in range(len(documents)):
+                        metadata = metadatas[i] if i < len(metadatas) else {}
+                        distance = distances[i] if i < len(distances) else 1.0
+                        
                         formatted_results.append({
-                            "content": conv_documents[i],
-                            "metadata": conv_metadatas[i],
-                            "distance": conv_distances[i]
+                            "content": documents[i],
+                            "metadata": metadata,
+                            "distance": distance
                         })
                         
-                    print(f"Added {len(conv_documents)} relevant conversation items")
-            except Exception as conv_error:
-                print(f"Error querying conversation history: {conv_error}")
+                    logging.info(f"Found {len(formatted_results)} relevant documents in user-specific collection")
+            except Exception as user_coll_error:
+                logging.error(f"Error querying user-specific collection: {user_coll_error}")
+        
+        # If no results from user-specific collection (or no user_id), try the default collection
+        if not formatted_results:
+            logging.info("Querying default portfolio collection")
+            try:
+                collection = chroma_client.get_or_create_collection(
+                    name="portfolio_data",
+                    embedding_function=openai_ef
+                )
                 
+                # Query default collection
+                results = collection.query(
+                    query_texts=[query],
+                    n_results=n_results
+                )
+                
+                # Process results if they exist
+                if (results.get("documents") and 
+                    isinstance(results["documents"], list) and 
+                    len(results["documents"]) > 0 and 
+                    isinstance(results["documents"][0], list)):
+                    
+                    documents = results["documents"][0]
+                    metadatas = results.get("metadatas", [[{}] * len(documents)])[0]
+                    distances = results.get("distances", [[1.0] * len(documents)])[0]
+                    
+                    # Format results
+                    for i in range(len(documents)):
+                        metadata = metadatas[i] if i < len(metadatas) else {}
+                        distance = distances[i] if i < len(distances) else 1.0
+                        
+                        formatted_results.append({
+                            "content": documents[i],
+                            "metadata": metadata,
+                            "distance": distance
+                        })
+                        
+                    logging.info(f"Found {len(formatted_results)} relevant documents in default collection")
+            except Exception as default_coll_error:
+                logging.error(f"Error querying default collection: {default_coll_error}")
+                
+        # Include conversation history if requested
+        if include_conversation and visitor_id:
+            try:
+                # Try conversations from user-specific collection first
+                if user_id:
+                    conv_collection_name = f"conversation_{user_id}"
+                    try:
+                        conv_collection = chroma_client.get_or_create_collection(
+                            name=conv_collection_name,
+                            embedding_function=openai_ef
+                        )
+                        
+                        # Query with visitor filter
+                        conv_results = conv_collection.query(
+                            query_texts=[query],
+                            n_results=2,
+                            where={"visitor_id": {"$eq": visitor_id}}
+                        )
+                        
+                        # Process conversation results
+                        if (conv_results.get("documents") and 
+                            isinstance(conv_results["documents"], list) and 
+                            len(conv_results["documents"]) > 0 and 
+                            isinstance(conv_results["documents"][0], list) and
+                            len(conv_results["documents"][0]) > 0):
+                            
+                            conv_docs = conv_results["documents"][0]
+                            conv_metas = conv_results.get("metadatas", [[{}] * len(conv_docs)])[0]
+                            conv_dists = conv_results.get("distances", [[1.0] * len(conv_docs)])[0]
+                            
+                            for i in range(len(conv_docs)):
+                                meta = conv_metas[i] if i < len(conv_metas) else {}
+                                dist = conv_dists[i] if i < len(conv_dists) else 1.0
+                                
+                                formatted_results.append({
+                                    "content": conv_docs[i],
+                                    "metadata": meta,
+                                    "distance": dist
+                                })
+                                
+                            logging.info(f"Added {len(conv_docs)} relevant user-specific conversation items")
+                    except Exception as user_conv_error:
+                        logging.error(f"Error querying user-specific conversations: {user_conv_error}")
+                
+                # Try global conversation collection
+                try:
+                    global_conv_collection = chroma_client.get_or_create_collection(
+                        name="conversation",
+                        embedding_function=openai_ef
+                    )
+                    
+                    # Query with visitor filter
+                    global_conv_results = global_conv_collection.query(
+                        query_texts=[query],
+                        n_results=2,
+                        where={"visitor_id": {"$eq": visitor_id}}
+                    )
+                    
+                    # Process global conversation results
+                    if (global_conv_results.get("documents") and 
+                        isinstance(global_conv_results["documents"], list) and 
+                        len(global_conv_results["documents"]) > 0 and 
+                        isinstance(global_conv_results["documents"][0], list) and
+                        len(global_conv_results["documents"][0]) > 0):
+                        
+                        g_conv_docs = global_conv_results["documents"][0]
+                        g_conv_metas = global_conv_results.get("metadatas", [[{}] * len(g_conv_docs)])[0]
+                        g_conv_dists = global_conv_results.get("distances", [[1.0] * len(g_conv_docs)])[0]
+                        
+                        for i in range(len(g_conv_docs)):
+                            g_meta = g_conv_metas[i] if i < len(g_conv_metas) else {}
+                            g_dist = g_conv_dists[i] if i < len(g_conv_dists) else 1.0
+                            
+                            formatted_results.append({
+                                "content": g_conv_docs[i],
+                                "metadata": g_meta,
+                                "distance": g_dist
+                            })
+                            
+                        logging.info(f"Added {len(g_conv_docs)} relevant global conversation items")
+                except Exception as global_conv_error:
+                    logging.error(f"Error querying global conversations: {global_conv_error}")
+                    
+            except Exception as conv_error:
+                logging.error(f"Error querying conversation history: {conv_error}")
+                
+        # Return the combined results
+        if formatted_results:
+            # Sort by distance (lower is better)
+            formatted_results.sort(key=lambda x: x.get("distance", 1.0))
+            logging.info(f"Returning {len(formatted_results)} total relevant items")
+        else:
+            logging.warning("No relevant documents found in any collection")
+            
         return formatted_results
+            
     except Exception as e:
-        print(f"Error querying vector database: {e}")
-        return []
+        logging.error(f"Error in query_vector_db: {e}")
+        return []  # Return empty list on error
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def call_openai_api(system_prompt, query):

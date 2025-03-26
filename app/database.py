@@ -5,8 +5,6 @@ import time
 import json
 import uuid
 import logging
-import copy
-import re
 
 # Load environment variables
 load_dotenv()
@@ -49,56 +47,76 @@ try:
 except Exception as e:
     print(f"Error loading saved profile: {e}")
 
-in_memory_messages = []
+in_memory_messages = {}
 
 def get_profile_data(user_id=None):
     """
     Get the profile data from Supabase for a specific user
     If user_id is not provided, return default profile
+    
+    Args:
+        user_id (str): Optional user ID to retrieve profile for
+        
+    Returns:
+        dict: Profile data dictionary with user information
     """
     try:
         if not user_id:
-            print("Warning: No user_id provided, using default profile data")
-            # Return the default in-memory profile
+            logging.warning("No user_id provided to get_profile_data, using default profile data")
+            # Return a copy of the default in-memory profile to avoid modification
             return in_memory_profile.copy()
             
-        if supabase:
-            # Query for the specific user's profile
-            response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+        if supabase is None:
+            logging.warning("Supabase client not available, using default profile with user_id")
+            # Return a copy of the default profile with the user_id added
+            profile = in_memory_profile.copy()
+            profile['user_id'] = user_id
+            return profile
             
-            if response.data and len(response.data) > 0:
-                print(f"Found profile for user: {user_id}")
-                profile = response.data[0]
+        # Query for the specific user's profile
+        logging.info(f"Querying Supabase for profile with user_id: {user_id}")
+        response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+        
+        if response.data and len(response.data) > 0:
+            logging.info(f"Found profile for user: {user_id}")
+            profile = response.data[0]
+            
+            # Ensure all required fields exist
+            profile_fields = ['bio', 'skills', 'experience', 'interests', 'name', 'location', 'projects']
+            for field in profile_fields:
+                if field not in profile or profile[field] is None:
+                    # Copy from default profile for missing fields
+                    profile[field] = in_memory_profile.get(field, '')
+            
+            # Initialize empty project list if not present
+            if 'project_list' not in profile:
+                profile['project_list'] = []
                 
-                # Fetch user's projects
+            # Fetch user's projects
+            try:
                 projects_response = supabase.table("projects").select("*").eq("user_id", user_id).execute()
                 
-                if projects_response.data:
-                    print(f"Found {len(projects_response.data)} projects for user: {user_id}")
+                if projects_response.data and len(projects_response.data) > 0:
+                    logging.info(f"Found {len(projects_response.data)} projects for user: {user_id}")
                     profile['project_list'] = projects_response.data
-                else:
-                    profile['project_list'] = []
+            except Exception as project_error:
+                logging.error(f"Error fetching projects: {project_error}")
                     
-                return profile
-            else:
-                print(f"No profile found for user: {user_id}, using default profile")
-                # If no profile found for this user, create a copy of the default with the user_id set
-                default_profile = in_memory_profile.copy()
-                default_profile['user_id'] = user_id
-                return default_profile
-        
-        # Fallback to in-memory profile if Supabase is not available
-        print("Supabase is not available, using in-memory profile")
-        default_profile = in_memory_profile.copy()
-        if user_id:
+            return profile
+        else:
+            logging.warning(f"No profile found for user: {user_id}, using default profile")
+            # If no profile found for this user, create a copy of the default with the user_id set
+            default_profile = in_memory_profile.copy()
             default_profile['user_id'] = user_id
-        return default_profile
+            default_profile['project_list'] = []
+            return default_profile
     except Exception as e:
-        print(f"Error fetching profile data: {e}")
+        logging.error(f"Error fetching profile data: {e}")
         # Return default profile on error
         default_profile = in_memory_profile.copy()
         if user_id:
             default_profile['user_id'] = user_id
+        default_profile['project_list'] = []
         return default_profile
 
 def save_profile_to_file():
@@ -355,33 +373,14 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
             
             return True
         
-        # First, make sure the user has a chatbot or create a default one if needed
-        user_chatbot_id = chatbot_id
+        # IMPORTANT: Skip chatbot handling entirely to avoid RLS issues
+        # We'll directly save the message with just the fields we need
         
-        if target_user_id and not chatbot_id:
-            try:
-                # Check if user has a chatbot
-                chatbot_response = supabase.table("chatbots").select("*").eq("user_id", target_user_id).limit(1).execute()
-                
-                # If user has a chatbot, use it
-                if chatbot_response.data and len(chatbot_response.data) > 0:
-                    user_chatbot_id = chatbot_response.data[0]["id"]
-                    logging.info(f"Found existing chatbot {user_chatbot_id} for user {target_user_id}")
-                else:
-                    # Don't attempt to create a chatbot here - let's use NULL for chatbot_id
-                    # This avoids RLS policy issues while still allowing messages to be stored
-                    logging.info(f"No chatbot found for user {target_user_id}, using NULL for chatbot_id")
-                    user_chatbot_id = None
-            except Exception as e:
-                logging.error(f"Error checking/creating user chatbot: {e}")
-                user_chatbot_id = None
-        
-        # Now log the message
+        # Prepare minimal message data required for the messages table
         message_data = {
             "message": message,
             "sender": sender,
-            "visitor_id": visitor_id,
-            "chatbot_id": user_chatbot_id
+            "visitor_id": visitor_id
         }
         
         # Add optional fields if available
@@ -393,6 +392,10 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
             
         if response:
             message_data["response"] = response
+        
+        # Use provided chatbot_id only if it was directly passed
+        if chatbot_id:
+            message_data["chatbot_id"] = chatbot_id
             
         # Insert into Supabase
         try:
@@ -406,7 +409,7 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         except Exception as insert_error:
             logging.error(f"Error logging chat message: {insert_error}")
             
-            # Try with just the basic fields as a fallback
+            # Try with just the basic fields as a fallback (absolute minimum)
             try:
                 basic_message = {
                     "message": message,
@@ -426,82 +429,76 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         logging.error(f"Error in log_chat_message: {e}")
         return False
 
-def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=None):
-    """Get chat history for a visitor and target user or chatbot
-    
-    Args:
-        limit (int): Maximum number of messages to return
-        visitor_id (str): Visitor ID to filter by
-        target_user_id (str): Target user ID to filter by
-        chatbot_id (str): Chatbot ID to filter by
-        
-    Returns:
-        list: List of chat history items
+def get_chat_history(limit=50, visitor_id=None, target_user_id=None):
+    """
+    Get chat history for a specific visitor or user
+    If target_user_id is provided, get messages associated with that user's chatbot
     """
     try:
-        if supabase is None:
-            logging.warning("Supabase client not initialized, using in-memory messages")
-            history = []
+        if supabase:
+            # Build query based on provided filters
+            query = supabase.table("messages").select("*")
             
-            # Filter messages from in_memory_messages matching the visitor_id
-            if visitor_id and visitor_id in in_memory_messages:
-                # Make a deep copy to avoid modifying the original
-                history = copy.deepcopy(in_memory_messages[visitor_id])
+            if target_user_id:
+                # Get all messages from this user's chatbots
+                chatbot_response = supabase.table("chatbots").select("id").eq("user_id", target_user_id).execute()
                 
-                # Sort messages by timestamp
-                history = sorted(
-                    history,
-                    key=lambda x: x.get("timestamp", "") if isinstance(x, dict) else "",
-                    reverse=True  # newest messages first
-                )
+                if chatbot_response.data and len(chatbot_response.data) > 0:
+                    chatbot_ids = [chatbot["id"] for chatbot in chatbot_response.data]
+                    
+                    # Filter by user_id directly or by chatbot_id
+                    query = query.or_(f"user_id.eq.{target_user_id},chatbot_id.in.({','.join(chatbot_ids)})")
+                else:
+                    # If no chatbots found, just filter by user_id
+                    query = query.eq("user_id", target_user_id)
                 
-                # Apply limit
-                history = history[:limit]
+            if visitor_id:
+                # Further filter by visitor_id if provided
+                query = query.eq("visitor_id", visitor_id)
                 
-            return history
+            # Order and limit
+            query = query.order("created_at", desc=True).limit(limit)
             
-        logging.info(f"Getting chat history from Supabase: visitor_id={visitor_id}, target_user_id={target_user_id}, limit={limit}")
+            response = query.execute()
+            
+            if response.data:
+                print(f"Retrieved {len(response.data)} chat messages")
+                # Convert timestamps and return in chronological order
+                messages = sorted(response.data, key=lambda x: x.get('created_at', ''))
+                return {
+                    "count": len(messages),
+                    "history": messages
+                }
+            
+            return {
+                "count": 0,
+                "history": []
+            }
         
-        # Build the query based on available parameters
-        query = supabase.table("messages").select("*")
+        # Fallback to in-memory storage
+        print("Supabase not available, retrieving from in-memory storage")
+        filtered_messages = in_memory_messages
         
-        # Add filters if provided
-        if visitor_id:
-            query = query.eq("visitor_id", visitor_id)
-            
         if target_user_id:
-            query = query.eq("user_id", target_user_id)
+            filtered_messages = [msg for msg in filtered_messages if msg.get('user_id') == target_user_id]
             
-        if chatbot_id:
-            query = query.eq("chatbot_id", chatbot_id)
+        if visitor_id:
+            filtered_messages = [msg for msg in filtered_messages if msg.get('visitor_id') == visitor_id]
             
-        # Add ordering and limit
-        results = query.order("created_at", desc=True).limit(limit).execute()
+        # Sort and limit
+        filtered_messages = sorted(filtered_messages, key=lambda x: x.get('timestamp', ''))
+        limited_messages = filtered_messages[-limit:] if len(filtered_messages) > limit else filtered_messages
         
-        # Extract and format the data
-        if hasattr(results, 'data') and isinstance(results.data, list):
-            history = results.data
-            
-            # Convert timestamps to string format for JSON serialization
-            for item in history:
-                if isinstance(item, dict):
-                    # Ensure timestamp is in string format
-                    if "created_at" in item and item["created_at"]:
-                        item["timestamp"] = item["created_at"]
-                        
-            # Reverse to have oldest messages first for UI display
-            history = list(reversed(history))
-            
-            logging.info(f"Found {len(history)} messages in history")
-            return history
-        else:
-            logging.warning(f"Unexpected result format from Supabase: {type(results)}")
-            return []
-            
+        return {
+            "count": len(limited_messages),
+            "history": limited_messages
+        }
     except Exception as e:
-        logging.error(f"Error fetching chat history: {e}")
-        # Return empty history on error
-        return []
+        print(f"Error retrieving chat history: {e}")
+        return {
+            "count": 0,
+            "history": []
+        }
 
 def verify_admin_login(username, password):
     """
