@@ -9,7 +9,7 @@ import uuid
 from app import models
 from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
 from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
-from app.routes import chatbot, profiles, admin
+from app.routes import chatbot, profiles, admin, chatbots
 
 # Configure logging
 logging.basicConfig(
@@ -37,6 +37,7 @@ app.add_middleware(
 app.include_router(chatbot.router, prefix="/chat", tags=["chatbot"])
 app.include_router(profiles.router, prefix="/profile", tags=["profiles"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(chatbots.router, prefix="/chatbots", tags=["chatbots"])
 
 # Define models
 class ProfileData(BaseModel):
@@ -68,8 +69,8 @@ async def root():
 async def profile(user_id: Optional[str] = None):
     """Get profile data"""
     try:
-        logging.info(f"Getting profile data for user_id: {user_id}")
-        profile_data = get_profile_data(user_id=user_id)
+        logging.info(f"Getting profile data")
+        profile_data = get_profile_data()
         return profile_data
     except Exception as e:
         logging.error(f"Error getting profile data: {e}")
@@ -91,20 +92,16 @@ async def update_profile_put(profile_data: ProfileData, user_id: Optional[str] =
 async def update_profile_handler(profile_data: ProfileData, user_id: Optional[str] = None):
     """Shared handler for profile updates"""
     try:
-        logging.info(f"Updating profile data for user_id: {user_id}")
+        logging.info(f"Updating profile data")
         
         # Convert Pydantic model to dict
         profile_dict = profile_data.dict()
         
-        # Ensure user_id is included in the data if provided
-        if user_id and 'user_id' not in profile_dict:
-            profile_dict['user_id'] = user_id
-        
         # Update profile data in the database
-        updated_profile = update_profile_data(profile_dict, user_id=user_id)
+        updated_profile = update_profile_data(profile_dict)
         
         # Add profile data to vector database
-        add_profile_to_vector_db(updated_profile, user_id=user_id)
+        add_profile_to_vector_db(updated_profile)
         
         return {"message": "Profile updated successfully", "profile": updated_profile}
     except Exception as e:
@@ -134,9 +131,9 @@ async def chat(chat_request: models.ChatRequest):
         
         logging.info(f"User message: {message[:50]}...")
         
-        # Get profile data for the specific user_id if provided
-        profile_data = get_profile_data(user_id=target_user_id)
-        logging.info(f"Retrieved profile data for user: {target_user_id or 'default'}, profile ID: {profile_data.get('id', 'No ID')}")
+        # Get profile data
+        profile_data = get_profile_data()
+        logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}") 
         
         # Query vector database for relevant information including conversation history
         logging.info(f"Querying vector DB for relevant context and conversation history")
@@ -144,12 +141,11 @@ async def chat(chat_request: models.ChatRequest):
             query=message, 
             n_results=3,
             visitor_id=visitor_id,
-            user_id=target_user_id,  # Pass the target user ID to search their data specifically
             include_conversation=True
         )
         
         # Get sequential conversation history for UI/display context
-        logging.info(f"Getting sequential conversation history for visitor: {visitor_id}, target user: {target_user_id or 'default'}")
+        logging.info(f"Getting sequential conversation history for visitor: {visitor_id}")
         history_limit = 10  # Get last 10 messages (5 exchanges)
         chat_history = get_chat_history(
             limit=history_limit,

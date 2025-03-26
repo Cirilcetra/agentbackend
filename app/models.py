@@ -11,6 +11,7 @@ class ChatRequest(BaseModel):
     visitor_id: str = Field(..., description="Unique identifier for the visitor")
     visitor_name: Optional[str] = Field(None, description="Optional name for the visitor")
     target_user_id: Optional[str] = Field(None, description="Optional target user ID for user-specific chatbots")
+    chatbot_id: Optional[str] = Field(None, description="Optional chatbot ID for sending message to a specific chatbot")
 
 
 class ChatResponse(BaseModel):
@@ -48,6 +49,7 @@ class Project(BaseModel):
     Model for a project
     """
     id: Optional[str] = None
+    user_id: Optional[str] = None
     title: str = Field(..., description="Project title")
     description: str = Field(..., description="Project description")
     category: str = Field(..., description="Project category (tech, design, other)")
@@ -63,7 +65,7 @@ class ProfileData(BaseModel):
     Model for profile data
     """
     id: Optional[str] = None
-    user_id: Optional[str] = Field(None, description="ID of the authenticated user who owns this profile")
+    user_id: Optional[str] = None
     name: Optional[str] = Field(None, description="User's name")
     location: Optional[str] = Field(None, description="User's location")
     bio: str
@@ -125,4 +127,26 @@ class ErrorResponse(BaseModel):
     Standard error response
     """
     error: str
-    detail: Optional[str] = None 
+    detail: Optional[str] = None
+
+
+class Chatbot(BaseModel):
+    """
+    Model for a chatbot
+    """
+    id: Optional[str] = None
+    user_id: str = Field(..., description="User ID that owns this chatbot")
+    name: str = Field(..., description="Chatbot name")
+    description: Optional[str] = Field(None, description="Chatbot description")
+    is_public: bool = Field(False, description="Whether the chatbot is publicly accessible")
+    configuration: Dict[str, Any] = Field(default_factory=dict, description="Chatbot configuration settings")
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ChatbotListResponse(BaseModel):
+    """
+    Response model for listing chatbots
+    """
+    chatbots: List[Chatbot] = Field(default_factory=list)
+    count: int = Field(0, description="Total number of chatbots") 
