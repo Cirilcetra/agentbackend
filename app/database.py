@@ -8,6 +8,14 @@ import logging
 import copy
 import re
 
+# Import auth headers getter (will be dynamically populated during requests)
+try:
+    from app.routes.auth import get_auth_headers
+except ImportError:
+    # Define a fallback for circular imports or when running during startup
+    def get_auth_headers():
+        return {}
+
 # Load environment variables
 load_dotenv()
 
@@ -28,13 +36,23 @@ DEFAULT_PROFILE = {
 supabase = None
 try:
     if SUPABASE_URL and SUPABASE_KEY:
+        # Create Supabase client with additional configuration
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("Supabase connection initialized")
+        
+        # Test the connection to make sure it's working
+        try:
+            # Try a simple query to test the connection
+            test_response = supabase.table("profiles").select("count", count="exact").limit(1).execute()
+            count = test_response.count if hasattr(test_response, 'count') else 0
+            logging.info(f"Supabase connection initialized successfully. Found {count} profiles.")
+        except Exception as test_error:
+            logging.error(f"Supabase connection test failed: {test_error}")
+            logging.warning("Proceeding with Supabase client, but there may be connectivity issues.")
     else:
-        print("Warning: Missing Supabase environment variables. Using in-memory storage.")
+        logging.warning("Missing Supabase environment variables. Using in-memory storage.")
 except Exception as e:
-    print(f"Error initializing Supabase client: {e}")
-    print("Using in-memory storage instead.")
+    logging.error(f"Error initializing Supabase client: {e}")
+    logging.warning("Using in-memory storage instead.")
 
 # In-memory storage as fallback
 in_memory_profile = DEFAULT_PROFILE.copy()
@@ -79,9 +97,17 @@ def get_profile_data(user_id=None):
             
         # Query for the specific user's profile
         logging.info(f"Querying Supabase for profile with user_id: {user_id}")
-        response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+        response = None
         
-        if response.data and len(response.data) > 0:
+        try:
+            # Make sure we're explicitly filtering by user_id
+            response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+            logging.info(f"Profile query result: {len(response.data) if response and hasattr(response, 'data') else 'No data'} records found")
+        except Exception as query_error:
+            logging.error(f"Error querying profiles table: {query_error}")
+            response = None
+        
+        if response and response.data and len(response.data) > 0:
             logging.info(f"Found profile for user: {user_id}")
             profile = response.data[0]
             profile['is_default'] = False  # Indicate this is a real profile
@@ -190,8 +216,8 @@ def update_profile_data(data, user_id=None):
     """
     try:
         if not user_id:
-            logging.error("Error: user_id is required to update profile data")
-            return {"success": False, "profile": None, "message": "User ID is required to update profile"}
+            logging.error("Error: No user_id provided for profile update")
+            return {"success": False, "profile": None, "message": "User ID is required"}
             
         if supabase is None:
             logging.warning("Supabase client not available, using in-memory storage")
@@ -212,60 +238,133 @@ def update_profile_data(data, user_id=None):
         logging.info(f"Updating profile for user: {user_id}")
         
         # Check if profile exists for this user
-        response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+        try:
+            # Get auth headers for authenticated requests
+            auth_headers = get_auth_headers()
+            logging.debug(f"Using auth headers: {bool(auth_headers)}")
+            
+            response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
         
-        # Prepare profile data (exclude project_list which is stored separately)
-        profile_data = {k: v for k, v in data.items() if k != 'project_list' and k != 'id' and k != 'is_default'}
-        profile_data['user_id'] = user_id
-        profile_data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-        
-        if response.data and len(response.data) > 0:
-            # Update existing profile
-            existing_profile = response.data[0]
-            profile_id = existing_profile['id']
+            # Prepare profile data (exclude project_list which is stored separately)
+            profile_data = {k: v for k, v in data.items() if k != 'project_list' and k != 'id' and k != 'is_default'}
+            profile_data['user_id'] = user_id
+            profile_data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
             
-            logging.info(f"Updating existing profile with ID: {profile_id}")
-            update_response = supabase.table("profiles").update(profile_data).eq("id", profile_id).execute()
-            
-            if not (update_response.data and len(update_response.data) > 0):
-                logging.error(f"Failed to update profile: {update_response}")
-                return {"success": False, "profile": None, "message": "Failed to update profile in database"}
+            if response.data and len(response.data) > 0:
+                # Update existing profile
+                existing_profile = response.data[0]
+                profile_id = existing_profile['id']
                 
-            logging.info(f"Profile updated successfully")
-        else:
-            # Create new profile
-            logging.info(f"Creating new profile for user: {user_id}")
-            
-            # Add created_at for new profiles
-            profile_data['created_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-            
-            create_response = supabase.table("profiles").insert(profile_data).execute()
-            
-            if not (create_response.data and len(create_response.data) > 0):
-                logging.error(f"Failed to create profile: {create_response}")
-                return {"success": False, "profile": None, "message": "Failed to create profile in database"}
+                logging.info(f"Updating existing profile with ID: {profile_id}")
+                try:
+                    # IMPORTANT: Update the profile using user_id, not profile ID
+                    logging.info(f"Updating profile with user_id: {user_id}")
+                    update_response = supabase.table("profiles").update(profile_data).eq("user_id", user_id).execute()
+                    
+                    if not (update_response.data and len(update_response.data) > 0):
+                        logging.error(f"Failed to update profile: {update_response}")
+                        return {"success": False, "profile": None, "message": "Failed to update profile in database"}
+                    
+                    logging.info(f"Profile updated successfully by user_id")
+                    
+                    # Get the updated profile data
+                    updated_profile_response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+                    if updated_profile_response.data and len(updated_profile_response.data) > 0:
+                        updated_profile = updated_profile_response.data[0]
+                    else:
+                        # Fallback to the profile data we have
+                        updated_profile = profile_data
+                    
+                    # Success
+                    return {
+                        "success": True,
+                        "profile": updated_profile,
+                        "message": "Profile updated successfully"
+                    }
+                except Exception as update_error:
+                    # Log the error and try using the old method as fallback
+                    logging.error(f"Error updating profile by user_id: {update_error}")
+                    try:
+                        # Try updating by profile ID as fallback
+                        update_response = supabase.table("profiles").update(profile_data).eq("id", profile_id).execute()
+                        
+                        if not (update_response.data and len(update_response.data) > 0):
+                            logging.error(f"Failed to update profile by ID as fallback: {update_response}")
+                            return {"success": False, "profile": None, "message": "Failed to update profile in database"}
+                        
+                        logging.info(f"Profile updated successfully by profile ID (fallback)")
+                        
+                        # Get the updated profile data
+                        updated_profile_response = supabase.table("profiles").select("*").eq("id", profile_id).execute()
+                        if updated_profile_response.data and len(updated_profile_response.data) > 0:
+                            updated_profile = updated_profile_response.data[0]
+                        else:
+                            # Fallback to the profile data we have
+                            updated_profile = profile_data
+                        
+                        # Return success with the updated profile
+                        return {
+                            "success": True,
+                            "profile": updated_profile,
+                            "message": "Profile updated successfully (by ID fallback)"
+                        }
+                    except Exception as fallback_error:
+                        logging.error(f"Error updating profile by ID fallback: {fallback_error}")
+                        return {"success": False, "profile": None, "message": f"Failed to update profile: {str(fallback_error)}"}
+            else:
+                # Create new profile
+                logging.info(f"Creating new profile for user: {user_id}")
                 
-            logging.info(f"Profile created successfully")
+                # Add created_at for new profiles
+                profile_data['created_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                
+                create_response = supabase.table("profiles").insert(profile_data).execute()
+                
+                if not (create_response.data and len(create_response.data) > 0):
+                    logging.error(f"Failed to create profile: {create_response}")
+                    return {"success": False, "profile": None, "message": "Failed to create profile in database"}
+                    
+                logging.info(f"Profile created successfully")
+                
+                # Return the newly created profile
+                created_profile = create_response.data[0] if (create_response.data and len(create_response.data) > 0) else profile_data
+                return {
+                    "success": True,
+                    "profile": created_profile,
+                    "message": "New profile created successfully"
+                }
+        except Exception as e:
+            logging.error(f"Error checking or updating profile: {e}")
+            return {"success": False, "profile": None, "message": f"Error updating profile: {str(e)}"}
         
         # Handle project_list if provided
         if 'project_list' in data and data['project_list']:
-            logging.info(f"Updating {len(data['project_list'])} projects")
-            for project in data['project_list']:
-                if 'id' in project and project['id']:
-                    # Update existing project
-                    project_result = update_project(project['id'], project, user_id)
-                    if not project_result:
-                        logging.warning(f"Failed to update project: {project['id']}")
-                else:
-                    # Add new project
-                    project_result = add_project(project, user_id)
-                    if not project_result:
-                        logging.warning(f"Failed to add new project")
+            try:
+                logging.info(f"Updating {len(data['project_list'])} projects")
+                for project in data['project_list']:
+                    if 'id' in project and project['id']:
+                        # Update existing project
+                        project_result = update_project(project['id'], project, user_id)
+                        if not project_result:
+                            logging.warning(f"Failed to update project: {project['id']}")
+                    else:
+                        # Add new project
+                        project_result = add_project(project, user_id)
+                        if not project_result:
+                            logging.warning(f"Failed to add new project")
+            except Exception as project_error:
+                logging.error(f"Error handling project list: {project_error}")
+                # Continue with the update - don't fail the entire operation
         
-        # Get the updated profile to return
-        updated_profile = get_profile_data(user_id)
-        updated_profile['is_default'] = False  # This is now a real profile
-        return {"success": True, "profile": updated_profile, "message": "Profile updated successfully"}
+        # Get the updated profile to return (unless we've already returned)
+        try:
+            updated_profile = get_profile_data(user_id)
+            updated_profile['is_default'] = False  # This is now a real profile
+            return {"success": True, "profile": updated_profile, "message": "Profile updated successfully"}
+        except Exception as final_error:
+            logging.error(f"Error getting final updated profile: {final_error}")
+            # Return the minimal profile data we have
+            return {"success": True, "profile": profile_data, "message": "Profile updated but retrieval failed"}
         
     except Exception as e:
         logging.error(f"Error updating profile: {e}", exc_info=True)

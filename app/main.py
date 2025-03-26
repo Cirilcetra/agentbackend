@@ -13,7 +13,7 @@ from app.routes import chatbot, profiles, admin, chatbots
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler("backend.log"),

@@ -71,8 +71,15 @@ async def update_profile(
         # Add/update timestamp for updating
         data_dict["updated_at"] = datetime.utcnow().isoformat()
         
+        # Remove id field if present to avoid SQL conflicts
+        if "id" in data_dict:
+            logging.info(f"Removing id field from profile update data")
+            data_dict.pop("id")
+        
         # Update in database with the authenticated user's ID
         logging.info(f"Updating profile for user {current_user.id}")
+        logging.debug(f"Profile update data: {data_dict}")
+        
         result = update_profile_data(data_dict, user_id=current_user.id)
         
         if not result or not result.get("success", False):
@@ -93,10 +100,13 @@ async def update_profile(
         except Exception as vector_error:
             logging.error(f"Error updating vector database: {vector_error}")
         
+        # Get the latest profile data to ensure we have the most up-to-date information
+        latest_profile = get_profile_data(current_user.id)
+        
         return {
             "success": True,
             "message": result.get("message", "Profile updated successfully"),
-            "profile": updated_profile
+            "profile": latest_profile
         }
     
     except HTTPException:

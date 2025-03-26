@@ -1,15 +1,19 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
+from typing import Optional, Dict, Any
 import jwt
 from datetime import datetime
 import os
 from pydantic import BaseModel
+import logging
 
 from app.database import supabase
 
 # Security scheme for JWT Bearer tokens
 security = HTTPBearer()
+
+# Store the most recent user authentication token (for server-side use only)
+current_auth_token = None
 
 # Pydantic model for the user
 class User(BaseModel):
@@ -18,12 +22,26 @@ class User(BaseModel):
     aud: Optional[str] = None
     role: Optional[str] = None
     
+def get_auth_headers() -> Dict[str, str]:
+    """
+    Get the authorization headers for Supabase requests
+    """
+    headers = {}
+    if current_auth_token:
+        headers["Authorization"] = f"Bearer {current_auth_token}"
+    return headers
+
 # Function to verify the JWT token and extract user information
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> User:
     """
     Dependency to get the current user from the JWT token
     """
     token = credentials.credentials
+    
+    # Store the token for later use in Supabase requests
+    global current_auth_token
+    current_auth_token = token
+    
     try:
         # Use Supabase's JWT verification if available
         if supabase:
@@ -32,6 +50,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                 auth_response = supabase.auth.get_user(token)
                 if auth_response and auth_response.user:
                     user_data = auth_response.user
+                    logging.info(f"Authenticated user: {user_data.id}")
                     return User(
                         id=user_data.id,
                         email=user_data.email,
@@ -39,7 +58,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                         role=user_data.role
                     )
             except Exception as supabase_error:
-                print(f"Supabase auth error: {supabase_error}")
+                logging.error(f"Supabase auth error: {supabase_error}")
                 # Fall back to manual JWT verification
         
         # Manual JWT verification as fallback
