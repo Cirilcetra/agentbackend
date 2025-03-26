@@ -6,8 +6,9 @@ import logging
 import os
 import json
 import uuid
+import time
 from app import models
-from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history, DEFAULT_PROFILE, supabase, update_profile_in_memory_only
+from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history, DEFAULT_PROFILE, supabase, update_profile_in_memory_only, add_project
 from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
 from app.routes import chatbot, profiles, admin, chatbots
 
@@ -58,6 +59,17 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = None  # Kept for API compatibility but not used
     visitor_id: Optional[str] = None
     visitor_name: Optional[str] = None
+    target_user_id: Optional[str] = None
+    chatbot_id: Optional[str] = None
+
+# Define models for projects
+class ProjectData(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    details: Optional[str] = None
+    content: Optional[str] = None
+    id: Optional[str] = None
 
 # Root endpoint
 @app.get("/")
@@ -106,20 +118,24 @@ async def update_profile_put(profile_data: ProfileData, user_id: Optional[str] =
 async def update_profile_handler(profile_data: ProfileData, user_id: Optional[str] = None, request: Request = None):
     """Shared handler for profile updates"""
     try:
-        # Try to extract user_id from request headers if not provided
-        if not user_id and request and request.headers.get("Authorization"):
+        logging.info("===== STARTING PROFILE UPDATE =====")
+        
+        # Get the authenticated user from the request if available
+        authenticated_user = None
+        if request:
             try:
-                # Extract user_id from auth header
                 auth_header = request.headers.get("Authorization")
                 if auth_header and auth_header.startswith("Bearer "):
                     token = auth_header.replace("Bearer ", "")
-                    # Verify token and extract user_id
-                    user_id = verify_token(token)
-                    logging.info(f"Extracted user_id from auth token: {user_id}")
+                    logging.info(f"Found auth token in request header")
+                    # Verify token and extract user ID
+                    authenticated_user = verify_token(token)
+                    if authenticated_user:
+                        logging.info(f"Authenticated as user: {authenticated_user}")
+                        # Override user_id with authenticated user
+                        user_id = authenticated_user
             except Exception as auth_error:
-                logging.error(f"Error extracting user_id from auth: {auth_error}")
-                
-        logging.info(f"Updating profile data for user_id: {user_id}")
+                logging.error(f"Auth error: {auth_error}")
         
         if not user_id:
             logging.warning("No user_id provided for profile update")
@@ -142,45 +158,71 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
         # Convert Pydantic model to dict
         profile_dict = profile_data.dict(exclude_unset=True)
         
+        # List of expected profile fields for debugging
+        expected_fields = ["bio", "skills", "experience", "interests", "name", "location", "projects"]
+        
+        # Log which fields are present and which are missing
+        present_fields = [field for field in expected_fields if field in profile_dict]
+        missing_fields = [field for field in expected_fields if field not in profile_dict]
+        
+        logging.info(f"Present fields: {present_fields}")
+        logging.info(f"Missing fields: {missing_fields}")
+        
+        # Explicitly check for each field and log its value
+        for field in expected_fields:
+            if field in profile_dict:
+                logging.info(f"Field '{field}' value: {profile_dict[field]}")
+            else:
+                logging.info(f"Field '{field}' is not included in the update")
+        
         # Ensure all empty string fields are converted to None to prevent overwriting with empty strings
         for key, value in profile_dict.items():
             if isinstance(value, str) and value.strip() == '':
                 profile_dict[key] = None
                 logging.info(f"Converting empty string to None for field: {key}")
         
+        # IMPORTANT: Get current profile to ensure fields that aren't being updated remain intact
+        current_profile = get_profile_data(user_id)
+        logging.info(f"Current profile before update: {current_profile}")
+        
+        # Merge the current profile with the update, only changing fields that are explicitly provided
+        # This helps ensure fields not included in the update aren't lost
+        merged_profile = current_profile.copy()
+        for field in expected_fields:
+            if field in profile_dict:
+                merged_profile[field] = profile_dict[field]
+                logging.info(f"Updating field '{field}' with value: {profile_dict[field]}")
+            else:
+                logging.info(f"Keeping existing value for field '{field}': {merged_profile.get(field)}")
+                
+        # Special handling for nested fields
+        if 'project_list' in profile_dict:
+            merged_profile['project_list'] = profile_dict['project_list']
+            
+        # Use the merged profile for the update
+        profile_dict = merged_profile
+        logging.info(f"Final merged profile data for update: {profile_dict}")
+        
         # For dev/testing, always use in-memory update to avoid database constraints
         if os.getenv("ENVIRONMENT") != "production":
             logging.info("Using in-memory update directly in development mode")
-            # Import the function from database.py
-            from app.database import update_profile_in_memory_only
-            
             # Update profile in memory only
             updated_profile = update_profile_in_memory_only(profile_dict, user_id=user_id)
             logging.info("Used in-memory update since we're in development mode")
+            
+            # Log the updated profile that was returned
+            logging.info(f"Updated profile after in-memory update: {updated_profile.get('profile', {})}")
+            
+        # If not in development mode, try database update
         else:
-            # Try to update profile using the standard approach (which tries Supabase)
+            logging.info("Attempting database update for profile")
             updated_profile = update_profile_data(profile_dict, user_id=user_id)
             
-            # Check if there was an RLS error or foreign key constraint error
-            error_found = False
-            if updated_profile and not updated_profile.get("success", False):
-                error_message = updated_profile.get("message", "")
-                if ("row-level security policy" in error_message or 
-                    "42501" in error_message or 
-                    "violates foreign key constraint" in error_message or
-                    "23503" in error_message):
-                    logging.warning(f"Database constraint error detected: {error_message}")
-                    error_found = True
-                    
-            # If there was an error, try in-memory update
-            if error_found:
-                # Import the function from database.py
-                from app.database import update_profile_in_memory_only
-                
-                # Update profile in memory only
+            # If database update fails, try in-memory fallback
+            if not updated_profile or not updated_profile.get("success", False):
+                logging.warning("Database update failed, using in-memory fallback")
                 updated_profile = update_profile_in_memory_only(profile_dict, user_id=user_id)
-                logging.info("Used in-memory update as fallback for database constraint error")
-            
+        
         # Check if the update was successful (either via DB or in-memory)
         if updated_profile and updated_profile.get("success", False):
             # Add profile data to vector database
@@ -190,14 +232,25 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
             except Exception as vector_error:
                 logging.error(f"Error adding profile to vector database: {vector_error}")
             
+            # Log all fields in the updated profile to verify they were properly updated
+            profile_to_return = updated_profile.get("profile", {})
+            logging.info(f"Profile fields after update:")
+            for field in expected_fields:
+                if field in profile_to_return:
+                    logging.info(f"Updated field '{field}': {profile_to_return[field]}")
+                else:
+                    logging.info(f"Field '{field}' not present in updated profile")
+            
+            logging.info("===== PROFILE UPDATE COMPLETED SUCCESSFULLY =====")
             return {
                 "message": "Profile updated successfully", 
                 "success": True,
-                "profile": updated_profile.get("profile", {})
+                "profile": profile_to_return
             }
         else:
             error_message = updated_profile.get("message", "Failed to update profile") if updated_profile else "Failed to update profile"
             logging.error(f"Failed to update profile for user: {user_id}. Error: {error_message}")
+            logging.info("===== PROFILE UPDATE FAILED =====")
             return {
                 "message": error_message, 
                 "success": False,
@@ -206,6 +259,7 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
             
     except Exception as e:
         logging.error(f"Error updating profile data: {e}", exc_info=True)
+        logging.info("===== PROFILE UPDATE FAILED WITH EXCEPTION =====")
         return {
             "message": f"Error updating profile: {str(e)}", 
             "success": False,
@@ -234,67 +288,64 @@ def verify_token(token):
 async def chat(chat_request: models.ChatRequest):
     """Process chat messages and generate AI response"""
     try:
-        logging.info(f"Processing chat message: {chat_request}")
+        logging.info("===== PROCESSING CHAT REQUEST =====")
         
-        # Extract visitor information
-        visitor_id = chat_request.visitor_id or "anonymous"
+        # Extract parameters from request
+        message = chat_request.message
+        visitor_id = chat_request.visitor_id
         visitor_name = chat_request.visitor_name
-        
-        # Important: target_user_id should be the auth.users.id value
-        # This is the user whose profile/chatbot the visitor is interacting with
         target_user_id = chat_request.target_user_id
+        chatbot_id = chat_request.chatbot_id
         
-        if not target_user_id:
-            logging.warning("No target_user_id provided, chat will use default profile")
-        else:
-            logging.info(f"Chat directed to user profile: {target_user_id}")
+        # Log request parameters
+        logging.info(f"Chat request: message='{message[:30]}...', visitor_id={visitor_id}, target_user_id={target_user_id}")
         
-        logging.info(f"Chat request from visitor: {visitor_id}, name: {visitor_name}, target user: {target_user_id}")
+        # Normalize visitor ID
+        if not visitor_id:
+            visitor_id = f"anonymous-{int(time.time())}"
+            logging.info(f"Generated visitor ID: {visitor_id}")
+            
+        # Normalize visitor name
+        if not visitor_name:
+            visitor_name = "Anonymous"
         
-        # Extract the message from the chat request - FIXED VERSION
-        message = ""
+        # Start by retrieving existing chat history
         try:
-            # Direct message attribute (from models.ChatRequest)
-            if hasattr(chat_request, 'message') and chat_request.message is not None:
-                message = chat_request.message
-                logging.info("Using direct message field")
-            # Messages array (from models.ChatRequest)
-            elif hasattr(chat_request, 'messages') and chat_request.messages:
-                # Find the last user message
-                for msg in reversed(chat_request.messages):
-                    if msg.role.lower() == 'user':
-                        message = msg.content
-                        logging.info("Using message from messages array")
-                        break
-            else:
-                logging.warning("No recognizable message format in request")
-        except Exception as extract_error:
-            logging.error(f"Error extracting message: {extract_error}", exc_info=True)
+            chat_history = get_chat_history(
+                limit=20,  # Last 20 messages
+                visitor_id=visitor_id,
+                target_user_id=target_user_id
+            )
+            logging.info(f"Retrieved {len(chat_history)} chat history items")
+        except Exception as history_error:
+            logging.error(f"Error retrieving chat history: {history_error}")
+            chat_history = []
         
-        if not message or message.strip() == "":
-            logging.warning("No valid user message found in request")
-            return {"response": "I didn't receive a valid message. Please try again."}
-        
-        logging.info(f"User message: {message[:50]}...")
-        
-        # Get profile data for the target user (will use default if not found)
+        # Get profile data for this target user if provided
+        profile_data = {}
+        if target_user_id:
+            try:
+                profile_data = get_profile_data(target_user_id)
+                logging.info(f"Retrieved profile data for target user: {target_user_id}")
+                
+                # Make sure project_list is always present
+                if 'project_list' not in profile_data:
+                    profile_data['project_list'] = []
+                    
+                # Log profile fields available
+                fields = list(profile_data.keys())
+                logging.info(f"Profile fields available: {fields}")
+                
+                # Check for project_list
+                project_count = len(profile_data.get('project_list', []))
+                logging.info(f"Profile has {project_count} projects")
+                
+            except Exception as profile_error:
+                logging.error(f"Error retrieving profile data: {profile_error}")
+                profile_data = {}
+                
+        # Vector search for relevant content based on the user's message
         try:
-            profile_data = get_profile_data(user_id=target_user_id)
-            if profile_data.get('is_default', True):
-                logging.info(f"Using default profile data (no user profile found)")
-            else:
-                logging.info(f"Retrieved profile data for user: {target_user_id}")
-        except Exception as profile_error:
-            logging.error(f"Error retrieving profile data: {profile_error}")
-            # Use a default profile as fallback
-            profile_data = DEFAULT_PROFILE.copy()
-            profile_data['is_default'] = True
-            if target_user_id:
-                profile_data['user_id'] = target_user_id
-        
-        # Query vector database for relevant information including conversation history
-        try:
-            logging.info(f"Querying vector DB for relevant context and conversation history")
             search_results = query_vector_db(
                 query=message, 
                 n_results=3,
@@ -302,40 +353,10 @@ async def chat(chat_request: models.ChatRequest):
                 visitor_id=visitor_id,
                 include_conversation=True
             )
-        except Exception as vector_error:
-            logging.error(f"Error querying vector database: {vector_error}")
+            logging.info(f"Vector search returned {len(search_results)} results")
+        except Exception as search_error:
+            logging.error(f"Error during vector search: {search_error}")
             search_results = []
-        
-        # Get sequential conversation history for UI/display context
-        try:
-            logging.info(f"Getting sequential conversation history for visitor: {visitor_id}")
-            history_limit = 10  # Get last 10 messages (5 exchanges)
-            chat_history_result = get_chat_history(
-                limit=history_limit,
-                visitor_id=visitor_id,
-                target_user_id=target_user_id
-            )
-            
-            # Ensure chat_history is a list (chat_history_result format was changed)
-            if isinstance(chat_history_result, dict) and 'history' in chat_history_result:
-                chat_history = chat_history_result['history']
-            else:
-                chat_history = chat_history_result if isinstance(chat_history_result, list) else []
-            
-            # Sort history to have oldest messages first
-            if chat_history:
-                chat_history = sorted(
-                    chat_history,
-                    key=lambda x: x.get("timestamp", "") if isinstance(x, dict) else "",
-                    reverse=False  # Oldest messages first
-                )
-                logging.info(f"Found {len(chat_history)} previous messages in conversation history")
-            else:
-                logging.info("No previous conversation history found")
-                chat_history = []
-        except Exception as history_error:
-            logging.error(f"Error retrieving chat history: {history_error}")
-            chat_history = []
         
         # Generate AI response using the embeddings.py implementation
         try:
@@ -359,7 +380,8 @@ async def chat(chat_request: models.ChatRequest):
                 response=ai_response,
                 visitor_id=visitor_id,
                 visitor_name=visitor_name,
-                target_user_id=target_user_id  # This is the auth.users.id
+                target_user_id=target_user_id,  # This is the auth.users.id
+                chatbot_id=chatbot_id
             )
             logging.info(f"Chat message saved successfully: {chat_log_success}")
         except Exception as log_error:
@@ -382,12 +404,33 @@ async def chat(chat_request: models.ChatRequest):
         except Exception as vector_store_error:
             logging.error(f"Error storing conversation in vector DB: {vector_store_error}")
         
-        # Return the response to the user
-        return {"response": ai_response}
+        # Fetch updated chat history to return
+        try:
+            updated_history = get_chat_history(
+                limit=20,  # Last 20 messages
+                visitor_id=visitor_id,
+                target_user_id=target_user_id
+            )
+            logging.info(f"Retrieved {len(updated_history)} updated chat history items")
+        except Exception as updated_history_error:
+            logging.error(f"Error retrieving updated chat history: {updated_history_error}")
+            updated_history = []
+        
+        logging.info("===== COMPLETED CHAT REQUEST =====")
+        
+        # Return the response to the user along with updated chat history
+        return {
+            "response": ai_response,
+            "chat_history": updated_history,
+            "success": True
+        }
     except Exception as e:
-        logging.error(f"Error processing chat: {str(e)}", exc_info=True)
-        # Return a user-friendly error message
-        return {"response": "I'm sorry, I encountered an error processing your message. Please try again later.", "error": str(e)}
+        logging.error(f"Error in chat endpoint: {e}", exc_info=True)
+        return {
+            "response": "I apologize, but I encountered an error processing your message. Please try again.",
+            "chat_history": [],
+            "success": False
+        }
 
 # Get chat history endpoint - kept for backward compatibility
 @app.get("/chat/history")
@@ -494,6 +537,209 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
             success=False,
             message=f"Error: {str(e)}"
         )
+
+# Projects endpoints
+@app.post("/projects")
+async def create_project(project_data: ProjectData, user_id: Optional[str] = None, request: Request = None):
+    """Create a new project"""
+    try:
+        # Try to extract user_id from request headers if not provided
+        if not user_id and request and request.headers.get("Authorization"):
+            try:
+                # Extract user_id from auth header
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.replace("Bearer ", "")
+                    # Verify token and extract user_id
+                    user_id = verify_token(token)
+                    logging.info(f"Extracted user_id from auth token: {user_id}")
+            except Exception as auth_error:
+                logging.error(f"Error extracting user_id from auth: {auth_error}")
+                
+        logging.info(f"Creating project for user_id: {user_id}")
+        
+        if not user_id:
+            logging.warning("No user_id provided for project creation")
+            # For testing purposes, use a fixed user_id if in development mode
+            if os.getenv("ENVIRONMENT") != "production":
+                test_user_id = os.getenv("TEST_USER_ID")
+                if test_user_id:
+                    logging.info(f"Using test user_id for development: {test_user_id}")
+                    user_id = test_user_id
+                else:
+                    logging.warning("No TEST_USER_ID environment variable set for development")
+            
+            if not user_id:
+                return {
+                    "message": "Authentication required to create project. Please provide user_id.",
+                    "success": False,
+                    "project": None
+                }
+        
+        # Convert Pydantic model to dict
+        project_dict = project_data.dict(exclude_unset=True)
+        
+        # Log the project data being created
+        logging.info(f"Creating project: {project_dict}")
+        
+        # Use the add_project function to add the project
+        result = add_project(project_dict, user_id=user_id)
+        
+        if result and result.get("success", False):
+            return {
+                "message": "Project created successfully",
+                "success": True,
+                "project": result.get("project", {}).get("project_list", [])[-1] if result.get("project", {}).get("project_list") else None,
+                "profile": result.get("profile", {})
+            }
+        else:
+            error_message = result.get("message", "Failed to create project") if result else "Failed to create project"
+            logging.error(f"Failed to create project. Error: {error_message}")
+            return {
+                "message": error_message,
+                "success": False,
+                "project": None
+            }
+    except Exception as e:
+        logging.error(f"Error creating project: {e}", exc_info=True)
+        return {
+            "message": f"Error creating project: {str(e)}",
+            "success": False,
+            "project": None
+        }
+
+@app.get("/projects")
+async def get_projects(user_id: Optional[str] = None, request: Request = None):
+    """Get projects for a specific user"""
+    try:
+        logging.info("===== GETTING USER PROJECTS =====")
+        
+        # Try to extract user_id from request headers if not provided
+        authenticated_user = None
+        if not user_id and request and request.headers.get("Authorization"):
+            try:
+                # Extract user_id from auth header
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.replace("Bearer ", "")
+                    # Verify token and extract user_id
+                    authenticated_user = verify_token(token)
+                    user_id = authenticated_user
+                    logging.info(f"Using authenticated user for projects: {user_id}")
+            except Exception as auth_error:
+                logging.error(f"Error extracting user_id from auth: {auth_error}")
+        
+        if not user_id:
+            logging.warning("No user_id provided for projects request")
+            # For testing purposes, use a fixed user_id if in development mode
+            if os.getenv("ENVIRONMENT") != "production":
+                test_user_id = os.getenv("TEST_USER_ID")
+                if test_user_id:
+                    logging.info(f"Using test user_id for development: {test_user_id}")
+                    user_id = test_user_id
+                else:
+                    logging.warning("No TEST_USER_ID environment variable set for development")
+            
+            if not user_id:
+                return {
+                    "message": "User ID is required to fetch projects",
+                    "success": False,
+                    "projects": []
+                }
+                
+        logging.info(f"Fetching projects for user: {user_id}")
+        
+        # Fetch projects directly from the database
+        if supabase:
+            try:
+                response = supabase.table("projects").select("*").eq("user_id", user_id).execute()
+                
+                if response and hasattr(response, 'data'):
+                    projects = response.data
+                    logging.info(f"Found {len(projects)} projects in database")
+                    
+                    return {
+                        "message": "Projects retrieved successfully",
+                        "success": True,
+                        "projects": projects
+                    }
+                else:
+                    logging.warning("No projects found in database or invalid response")
+                    return {
+                        "message": "No projects found",
+                        "success": True,
+                        "projects": []
+                    }
+            except Exception as db_error:
+                logging.error(f"Database error fetching projects: {db_error}")
+                # Fall back to profile data
+        
+        # Fallback method: get projects from profile data
+        profile_data = get_profile_data(user_id)
+        
+        if profile_data and 'project_list' in profile_data:
+            projects = profile_data['project_list']
+            logging.info(f"Found {len(projects)} projects in profile data")
+            return {
+                "message": "Projects retrieved from profile data",
+                "success": True,
+                "projects": projects
+            }
+        else:
+            logging.warning("No projects found in profile data")
+            return {
+                "message": "No projects found",
+                "success": True,
+                "projects": []
+            }
+    
+    except Exception as e:
+        logging.error(f"Error fetching projects: {e}", exc_info=True)
+        return {
+            "message": f"Error fetching projects: {str(e)}",
+            "success": False,
+            "projects": []
+        }
+
+@app.get("/chat/history")
+async def get_chat_history_endpoint(
+    visitor_id: Optional[str] = None,
+    target_user_id: Optional[str] = None,
+    chatbot_id: Optional[str] = None,
+    limit: int = 50
+):
+    """Get chat history for a visitor and target user"""
+    try:
+        logging.info(f"Retrieving chat history: visitor_id={visitor_id}, target_user_id={target_user_id}, limit={limit}")
+        
+        if not visitor_id and not target_user_id and not chatbot_id:
+            return {
+                "success": False,
+                "message": "At least one filter (visitor_id, target_user_id, or chatbot_id) is required",
+                "history": []
+            }
+        
+        history = get_chat_history(
+            limit=limit,
+            visitor_id=visitor_id,
+            target_user_id=target_user_id,
+            chatbot_id=chatbot_id
+        )
+        
+        logging.info(f"Retrieved {len(history)} chat history items")
+        
+        return {
+            "success": True,
+            "message": "Chat history retrieved successfully",
+            "history": history
+        }
+    except Exception as e:
+        logging.error(f"Error retrieving chat history: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Error retrieving chat history: {str(e)}",
+            "history": []
+        }
 
 # Run the application with uvicorn
 if __name__ == "__main__":

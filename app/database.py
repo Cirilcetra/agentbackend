@@ -412,6 +412,7 @@ def add_project(project_data, user_id=None):
         # Generate a UUID for the project if not provided
         if not project_data.get('id'):
             project_data['id'] = str(uuid.uuid4())
+            logging.info(f"Generated new project ID: {project_data['id']}")
         
         # Set timestamps
         current_time = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
@@ -421,38 +422,110 @@ def add_project(project_data, user_id=None):
         # Add user_id to the project data
         project_data['user_id'] = user_id
         
+        # Log the complete project data
+        logging.info(f"Adding project with data: {project_data}")
+        
+        # Validate required fields
+        required_fields = ["title", "description"]
+        missing_fields = [field for field in required_fields if not project_data.get(field)]
+        
+        if missing_fields:
+            logging.error(f"Missing required fields for project: {missing_fields}")
+            return {"success": False, "message": f"Missing required fields: {', '.join(missing_fields)}", "profile": None}
+        
         if supabase:
             try:
                 # Insert project into projects table
+                logging.info(f"Inserting project into Supabase database")
                 response = supabase.table("projects").insert(project_data).execute()
                 
-                if not response.data or len(response.data) == 0:
+                if not (response and hasattr(response, 'data') and response.data and len(response.data) > 0):
                     logging.error(f"Failed to add project to database: Empty response")
-                    return {"success": False, "message": "Failed to add project to database", "profile": None}
+                    # Fall back to in-memory storage if database fails
+                    logging.info("Falling back to in-memory storage")
+                    return add_project_in_memory(project_data, user_id)
                     
                 logging.info(f"Added new project with ID: {project_data['id']} for user: {user_id}")
                 
+                # Get the created project from the response
+                created_project = response.data[0]
+                logging.info(f"Created project: {created_project}")
+                
                 # Return the updated profile data
                 updated_profile = get_profile_data(user_id)
+                
+                # Make sure the newly created project is in the project list
+                if 'project_list' not in updated_profile:
+                    updated_profile['project_list'] = []
+                
+                # Check if the project is already in the list
+                project_exists = False
+                for i, project in enumerate(updated_profile['project_list']):
+                    if project.get('id') == created_project['id']:
+                        updated_profile['project_list'][i] = created_project
+                        project_exists = True
+                        break
+                
+                if not project_exists:
+                    updated_profile['project_list'].append(created_project)
+                
                 return {"success": True, "message": "Project added successfully", "profile": updated_profile}
+                
             except Exception as db_error:
                 logging.error(f"Database error adding project: {db_error}", exc_info=True)
-                return {"success": False, "message": f"Database error: {str(db_error)}", "profile": None}
+                # Fall back to in-memory storage
+                logging.info("Falling back to in-memory storage after database error")
+                return add_project_in_memory(project_data, user_id)
         
         # Fallback to in-memory storage
         logging.warning("Supabase is not available, using in-memory storage")
+        return add_project_in_memory(project_data, user_id)
+        
+    except Exception as e:
+        logging.error(f"Error adding project: {e}", exc_info=True)
+        return {"success": False, "message": f"Error adding project: {str(e)}", "profile": None}
+
+def add_project_in_memory(project_data, user_id=None):
+    """
+    Add a project to in-memory storage (helper function)
+    """
+    try:
+        logging.info(f"Adding project to in-memory storage: {project_data}")
+        
         if 'project_list' not in in_memory_profile:
             in_memory_profile['project_list'] = []
             
-        in_memory_profile['project_list'].append(project_data)
+        # Make a copy of the project data to avoid modifying the original
+        project_copy = project_data.copy()
+        
+        # Make sure it has an ID
+        if not project_copy.get('id'):
+            project_copy['id'] = str(uuid.uuid4())
+            
+        # Check if the project already exists (by ID)
+        for i, project in enumerate(in_memory_profile['project_list']):
+            if project.get('id') == project_copy.get('id'):
+                # Update existing project
+                in_memory_profile['project_list'][i] = project_copy
+                logging.info(f"Updated existing project with ID: {project_copy['id']}")
+                save_profile_to_file()
+                
+                updated_profile = in_memory_profile.copy()
+                updated_profile['user_id'] = user_id
+                return {"success": True, "message": "Project updated successfully (in-memory)", "profile": updated_profile}
+        
+        # Add as new project
+        in_memory_profile['project_list'].append(project_copy)
+        logging.info(f"Added new project with ID: {project_copy['id']}")
         save_profile_to_file()
         
         updated_profile = in_memory_profile.copy()
         updated_profile['user_id'] = user_id
         return {"success": True, "message": "Project added successfully (in-memory)", "profile": updated_profile}
+    
     except Exception as e:
-        logging.error(f"Error adding project: {e}", exc_info=True)
-        return {"success": False, "message": f"Error adding project: {str(e)}", "profile": None}
+        logging.error(f"Error adding project to in-memory storage: {e}", exc_info=True)
+        return {"success": False, "message": f"Error adding project in-memory: {str(e)}", "profile": None}
 
 def update_project(project_id, project_data, user_id=None):
     """
@@ -562,13 +635,21 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         bool: True if the message was logged successfully
     """
     try:
+        # Generate timestamp for the message
         timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        
+        # Add created_at field for database compatibility
+        created_at = timestamp
         
         # Use a default visitor ID if none provided
         if not visitor_id:
             visitor_id = f"anonymous-{int(time.time())}"
-            
-        # Log to in-memory messages if Supabase is not available
+            logging.info(f"Generated anonymous visitor_id: {visitor_id}")
+        
+        logging.info(f"Logging chat message for user_id: {target_user_id}, visitor_id: {visitor_id}")
+        logging.info(f"Message: {message[:50]}... Response: {response[:50] if response else 'None'}")
+        
+        # Handle in-memory storage if Supabase is unavailable
         if supabase is None:
             logging.warning("Supabase client not initialized, using in-memory messages")
             
@@ -580,28 +661,29 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
             message_data = {
                 "id": str(uuid.uuid4()),
                 "message": message,
+                "response": response if response else "",
                 "sender": sender,
                 "visitor_id": visitor_id,
-                "visitor_name": visitor_name,
+                "visitor_name": visitor_name if visitor_name else "Anonymous",
                 "user_id": target_user_id,
                 "chatbot_id": chatbot_id,
-                "timestamp": timestamp
+                "created_at": created_at
             }
             
-            # Add response if available
-            if response:
-                message_data["response"] = response
-                
             in_memory_messages[visitor_id].append(message_data)
             logging.info(f"Added message to in-memory messages for visitor: {visitor_id}")
             
+            # Log all in-memory messages for this visitor
+            logging.info(f"Current in-memory messages for visitor {visitor_id}: {len(in_memory_messages[visitor_id])}")
+            
             return True
         
-        # Create a message record - IMPORTANT: Needs to comply with RLS policies
+        # Create a message record for Supabase
         message_data = {
             "message": message,
-            "sender": sender,
-            "visitor_id": visitor_id
+            "response": response if response else "",
+            "visitor_id": visitor_id,
+            "created_at": created_at
         }
         
         # Add optional fields if available
@@ -612,10 +694,6 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         if target_user_id:
             message_data["user_id"] = target_user_id
         
-        # Add response if available
-        if response:
-            message_data["response"] = response
-        
         # Only add chatbot_id if a valid one is provided
         if chatbot_id:
             message_data["chatbot_id"] = chatbot_id
@@ -624,6 +702,7 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
         # This helps with the RLS policy for messages
         if target_user_id and not chatbot_id:
             try:
+                logging.info(f"Looking for a public chatbot for user: {target_user_id}")
                 # Find a public chatbot for this user
                 public_chatbot_query = supabase.table("chatbots") \
                     .select("id") \
@@ -635,8 +714,23 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
                 if public_chatbot_query.data and len(public_chatbot_query.data) > 0:
                     message_data["chatbot_id"] = public_chatbot_query.data[0]["id"]
                     logging.info(f"Using public chatbot {message_data['chatbot_id']} for message")
+                else:
+                    logging.info("No public chatbot found, creating a default one")
+                    # Create a default public chatbot for this user
+                    default_chatbot = {
+                        "user_id": target_user_id,
+                        "name": "Portfolio Assistant",
+                        "description": "Default portfolio assistant",
+                        "is_public": True,
+                        "created_at": created_at,
+                        "updated_at": created_at
+                    }
+                    chatbot_result = supabase.table("chatbots").insert(default_chatbot).execute()
+                    if chatbot_result.data and len(chatbot_result.data) > 0:
+                        message_data["chatbot_id"] = chatbot_result.data[0]["id"]
+                        logging.info(f"Created and using new chatbot {message_data['chatbot_id']} for message")
             except Exception as chatbot_error:
-                logging.error(f"Error finding public chatbot: {chatbot_error}")
+                logging.error(f"Error finding/creating chatbot: {chatbot_error}")
         
         # Insert message into Supabase
         try:
@@ -648,7 +742,8 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
                 return True
             else:
                 logging.warning(f"Unexpected result format when logging message: {result}")
-                return False
+                # Fall back to in-memory storage
+                return log_message_in_memory(message, sender, response, visitor_id, visitor_name, target_user_id, chatbot_id, created_at)
                 
         except Exception as insert_error:
             logging.error(f"Error logging chat message: {insert_error}")
@@ -662,13 +757,12 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
                     try:
                         minimal_data = {
                             "message": message,
+                            "response": response if response else "",
                             "sender": sender,
-                            "visitor_id": visitor_id
+                            "visitor_id": visitor_id,
+                            "created_at": created_at
                         }
                         
-                        if response:
-                            minimal_data["response"] = response
-                            
                         anon_result = supabase.table("messages").insert(minimal_data).execute()
                         if hasattr(anon_result, 'data') and len(anon_result.data) > 0:
                             logging.info(f"Successfully logged anonymous message with minimal fields")
@@ -682,14 +776,13 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
                         # Adjust the policy in Supabase to allow this
                         auth_minimal_data = {
                             "message": message,
+                            "response": response if response else "",
                             "sender": sender,
                             "visitor_id": visitor_id,
-                            "user_id": target_user_id
+                            "user_id": target_user_id,
+                            "created_at": created_at
                         }
                         
-                        if response:
-                            auth_minimal_data["response"] = response
-                            
                         auth_result = supabase.table("messages").insert(auth_minimal_data).execute()
                         if hasattr(auth_result, 'data') and len(auth_result.data) > 0:
                             logging.info(f"Successfully logged authenticated message with minimal fields")
@@ -698,29 +791,48 @@ def log_chat_message(message, sender="user", response=None, visitor_id=None, vis
                         logging.error(f"Failed even with minimal authenticated fields: {auth_error}")
             
             # If all attempts failed, log to in-memory as fallback
-            logging.warning("Falling back to in-memory storage due to Supabase errors")
-            
-            if visitor_id not in in_memory_messages:
-                in_memory_messages[visitor_id] = []
-                
-            fallback_data = {
-                "id": str(uuid.uuid4()),
-                "message": message,
-                "sender": sender,
-                "visitor_id": visitor_id,
-                "visitor_name": visitor_name,
-                "user_id": target_user_id,
-                "timestamp": timestamp
-            }
-            
-            if response:
-                fallback_data["response"] = response
-                
-            in_memory_messages[visitor_id].append(fallback_data)
-            return False  # Still return False as the database insert failed
+            return log_message_in_memory(message, sender, response, visitor_id, visitor_name, target_user_id, chatbot_id, created_at)
     
     except Exception as e:
         logging.error(f"Error in log_chat_message: {e}")
+        # Try in-memory as last resort
+        return log_message_in_memory(message, sender, response, visitor_id, visitor_name, target_user_id, chatbot_id)
+
+def log_message_in_memory(message, sender="user", response=None, visitor_id=None, visitor_name=None, target_user_id=None, chatbot_id=None, created_at=None):
+    """Helper function to log messages in memory when database fails"""
+    try:
+        if not created_at:
+            created_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            
+        if not visitor_id:
+            visitor_id = f"anonymous-{int(time.time())}"
+            
+        logging.warning("Falling back to in-memory storage for chat message")
+        
+        if visitor_id not in in_memory_messages:
+            in_memory_messages[visitor_id] = []
+            
+        fallback_data = {
+            "id": str(uuid.uuid4()),
+            "message": message,
+            "response": response if response else "",
+            "sender": sender,
+            "visitor_id": visitor_id,
+            "visitor_name": visitor_name if visitor_name else "Anonymous",
+            "user_id": target_user_id,
+            "chatbot_id": chatbot_id,
+            "created_at": created_at
+        }
+            
+        in_memory_messages[visitor_id].append(fallback_data)
+        logging.info(f"Added message to in-memory fallback storage for visitor: {visitor_id}")
+        
+        # Log the number of messages now in memory
+        logging.info(f"Current in-memory messages for visitor {visitor_id}: {len(in_memory_messages[visitor_id])}")
+        
+        return True
+    except Exception as fallback_error:
+        logging.error(f"Error in fallback in-memory message storage: {fallback_error}")
         return False
 
 def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=None):
@@ -737,6 +849,8 @@ def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=
         list: List of chat history items
     """
     try:
+        logging.info(f"Getting chat history: visitor_id={visitor_id}, target_user_id={target_user_id}, chatbot_id={chatbot_id}")
+        
         if supabase is None:
             logging.warning("Supabase client not initialized, using in-memory messages")
             history = []
@@ -744,20 +858,24 @@ def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=
             # Filter messages from in_memory_messages matching the visitor_id
             if visitor_id and visitor_id in in_memory_messages:
                 # Make a deep copy to avoid modifying the original
+                logging.info(f"Found {len(in_memory_messages[visitor_id])} in-memory messages for visitor: {visitor_id}")
                 history = copy.deepcopy(in_memory_messages[visitor_id])
                 
-                # Sort messages by timestamp
+                # Sort messages by timestamp/created_at
                 history = sorted(
                     history,
-                    key=lambda x: x.get("timestamp", "") if isinstance(x, dict) else "",
+                    key=lambda x: x.get("created_at", "") or x.get("timestamp", ""),
                     reverse=True  # newest messages first
                 )
                 
                 # Apply limit
                 history = history[:limit]
                 
+                logging.info(f"Returning {len(history)} in-memory chat messages")
+                
             return history
-            
+        
+        # Use Supabase to get chat history    
         logging.info(f"Getting chat history from Supabase: visitor_id={visitor_id}, target_user_id={target_user_id}, limit={limit}")
         
         # Build the query based on available parameters
@@ -777,36 +895,74 @@ def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=
         query = query.order("created_at", desc=True).limit(limit)
         
         # Execute the query
-        results = query.execute()
-        
-        # Extract and format the data
-        history = []
-        if hasattr(results, 'data'):
-            if isinstance(results.data, list):
-                history = results.data
-                
-                # Convert timestamps to string format for JSON serialization
-                for item in history:
-                    if isinstance(item, dict):
-                        # Ensure timestamp is in string format
-                        if "created_at" in item and item["created_at"]:
-                            item["timestamp"] = str(item["created_at"])
-                        
-                # Add log for troubleshooting
-                logging.info(f"Found {len(history)} history items")
-                
-                for i, item in enumerate(history[:2]):  # Log first two items for debugging
-                    logging.info(f"History item {i}: {type(item)}, keys: {item.keys() if isinstance(item, dict) else 'not a dict'}")
+        try:
+            result = query.execute()
+            
+            if result and hasattr(result, 'data'):
+                logging.info(f"Retrieved {len(result.data)} chat messages from database")
+                return result.data
             else:
-                logging.warning(f"Unexpected results.data type: {type(results.data)}")
-        else:
-            logging.warning(f"results has no 'data' attribute")
-        
-        return history
+                logging.warning("No chat history found in database")
+                return []
+                
+        except Exception as query_error:
+            logging.error(f"Error querying chat history: {query_error}")
+            
+            # Try again with just visitor_id if other parameters might be causing RLS issues
+            if (target_user_id or chatbot_id) and visitor_id:
+                try:
+                    logging.info("Retrying with only visitor_id filter")
+                    simple_query = supabase.table("messages").select("*").eq("visitor_id", visitor_id).order("created_at", desc=True).limit(limit)
+                    simple_result = simple_query.execute()
+                    
+                    if simple_result and hasattr(simple_result, 'data'):
+                        logging.info(f"Retrieved {len(simple_result.data)} chat messages with simplified query")
+                        return simple_result.data
+                except Exception as simple_error:
+                    logging.error(f"Error with simplified chat history query: {simple_error}")
+            
+            # Fall back to in-memory if all database attempts fail
+            return get_in_memory_chat_history(limit, visitor_id, target_user_id, chatbot_id)
             
     except Exception as e:
         logging.error(f"Error fetching chat history: {e}")
-        # Return empty history on error
+        return get_in_memory_chat_history(limit, visitor_id, target_user_id, chatbot_id)
+
+def get_in_memory_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=None):
+    """Helper function to get in-memory chat history when database fails"""
+    try:
+        history = []
+        
+        # Filter messages from in_memory_messages matching the visitor_id
+        if visitor_id and visitor_id in in_memory_messages:
+            logging.info(f"Using in-memory chat history for visitor: {visitor_id}")
+            # Make a deep copy to avoid modifying the original
+            candidate_messages = copy.deepcopy(in_memory_messages[visitor_id])
+            
+            # Apply any additional filters
+            if target_user_id:
+                candidate_messages = [msg for msg in candidate_messages 
+                                     if msg.get("user_id") == target_user_id]
+                                     
+            if chatbot_id:
+                candidate_messages = [msg for msg in candidate_messages 
+                                     if msg.get("chatbot_id") == chatbot_id]
+            
+            # Sort messages by timestamp/created_at
+            candidate_messages = sorted(
+                candidate_messages,
+                key=lambda x: x.get("created_at", "") or x.get("timestamp", ""),
+                reverse=True  # newest messages first
+            )
+            
+            # Apply limit
+            history = candidate_messages[:limit]
+            
+            logging.info(f"Returning {len(history)} in-memory chat messages as fallback")
+            
+        return history
+    except Exception as fallback_error:
+        logging.error(f"Error in fallback in-memory chat history: {fallback_error}")
         return []
 
 def verify_admin_login(username, password):
@@ -888,18 +1044,27 @@ def update_profile_in_memory_only(data, user_id=None):
         # Make a local copy to avoid modifying the original
         profile_data = data.copy()
         
+        # List all expected profile fields for tracking
+        expected_fields = ["bio", "skills", "experience", "interests", "name", "location", "projects"]
+        logging.info(f"In-memory profile update with fields: {list(profile_data.keys())}")
+        
         # Convert empty strings to None
         for key, value in profile_data.items():
             if isinstance(value, str) and value.strip() == '':
                 profile_data[key] = None
                 logging.info(f"Converting empty string to NULL for field: {key}")
         
+        # Log the current in-memory profile state before updates
+        logging.info(f"Current in-memory profile before update: {in_memory_profile}")
+        
         # Update in-memory profile with new values
         for key, value in profile_data.items():
             if key != 'id' and key != 'project_list' and key != 'is_default':
-                # Allow explicit NULL updates by removing the None check
+                # Store the previous value for comparison
+                previous_value = in_memory_profile.get(key, None)
+                # Allow explicit NULL updates
                 in_memory_profile[key] = value
-                logging.info(f"Updated {key} in memory with value: {value}")
+                logging.info(f"Updated in-memory field '{key}': {previous_value} → {value}")
         
         # Add user_id if provided
         if user_id:
@@ -912,11 +1077,28 @@ def update_profile_in_memory_only(data, user_id=None):
         save_profile_to_file()
         logging.info("Saved updated profile to file")
         
+        # Log the final in-memory profile state after updates
+        logging.info(f"Final in-memory profile after update: {in_memory_profile}")
+        
         # Return a copy of the updated profile
         updated_profile = in_memory_profile.copy()
         if user_id:
             updated_profile['user_id'] = user_id
         updated_profile['is_default'] = False
+        
+        # Add the project list if it exists
+        if 'project_list' in in_memory_profile:
+            updated_profile['project_list'] = in_memory_profile['project_list']
+        else:
+            updated_profile['project_list'] = []
+        
+        # Log what's being returned
+        logging.info(f"Returning updated profile with fields: {list(updated_profile.keys())}")
+        for field in expected_fields:
+            if field in updated_profile:
+                logging.info(f"Return field '{field}': {updated_profile[field]}")
+            else:
+                logging.info(f"Field '{field}' not present in returned profile")
         
         return {"success": True, "profile": updated_profile, "message": "Profile updated successfully (in-memory only)"}
     except Exception as e:

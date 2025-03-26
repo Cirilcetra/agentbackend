@@ -13,31 +13,13 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     """
-    Request model for chat endpoint.
-    Supports both direct message format and messages array format.
+    Model for chat request
     """
-    # Direct message format
-    message: Optional[str] = Field(None, description="The message sent by the user (direct format)")
-    
-    # Messages array format
-    messages: Optional[List[ChatMessage]] = Field(None, description="Array of messages in the conversation")
-    
-    # Common fields
-    visitor_id: Optional[str] = Field(None, description="Unique identifier for the visitor")
-    visitor_name: Optional[str] = Field(None, description="Optional name for the visitor")
-    target_user_id: Optional[str] = Field(None, description="Optional target user ID for user-specific chatbots")
-    chatbot_id: Optional[str] = Field(None, description="Optional chatbot ID for sending message to a specific chatbot")
-    
-    def get_message(self) -> str:
-        """Extract the user's message from either format"""
-        if self.message:
-            return self.message
-        elif self.messages and len(self.messages) > 0:
-            # Get the last user message from the messages array
-            for msg in reversed(self.messages):
-                if msg.role.lower() == 'user':
-                    return msg.content
-        return ""
+    message: str = Field(..., description="The user's message")
+    visitor_id: Optional[str] = Field(None, description="Optional visitor ID for anonymous visitors") 
+    visitor_name: Optional[str] = Field(None, description="Optional visitor name")
+    target_user_id: Optional[str] = Field(None, description="Target user ID (auth.users.id of the portfolio owner)")
+    chatbot_id: Optional[str] = Field(None, description="Optional chatbot ID for routing to specific chatbot")
 
 
 class ChatResponse(BaseModel):
