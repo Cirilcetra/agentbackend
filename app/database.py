@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 import time
 import json
 import uuid
+import logging
+import copy
+import re
 
 # Load environment variables
 load_dotenv()
@@ -300,143 +303,205 @@ def delete_project(project_id, user_id=None):
         print(f"Error deleting project: {e}")
         return False
 
-def log_chat_message(message, sender, response=None, visitor_id=None, visitor_name=None, target_user_id=None):
+def log_chat_message(message, sender="user", response=None, visitor_id=None, visitor_name=None, target_user_id=None, chatbot_id=None):
     """
     Log a chat message to the database
-    If target_user_id is provided, associate the message with that user
+    
+    Args:
+        message (str): The message to log
+        sender (str): The sender of the message (user, ai, system)
+        response (str): Optional response from the AI
+        visitor_id (str): Optional visitor ID
+        visitor_name (str): Optional visitor name
+        target_user_id (str): Optional target user ID
+        chatbot_id (str): Optional chatbot ID
+        
+    Returns:
+        bool: True if the message was logged successfully
     """
     try:
-        if supabase:
-            # Check if the user has a chatbot
-            chatbot = None
-            if target_user_id:
-                chatbot_response = supabase.table("chatbots").select("*").eq("user_id", target_user_id).limit(1).execute()
-                if chatbot_response.data and len(chatbot_response.data) > 0:
-                    chatbot = chatbot_response.data[0]
-                else:
-                    # Create a default chatbot for the user
-                    chatbot_data = {
-                        "user_id": target_user_id,
-                        "name": "My Chatbot",
-                        "description": "Default chatbot",
-                        "is_public": False
-                    }
-                    chatbot_response = supabase.table("chatbots").insert(chatbot_data).execute()
-                    if chatbot_response.data and len(chatbot_response.data) > 0:
-                        chatbot = chatbot_response.data[0]
+        timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        
+        # Use a default visitor ID if none provided
+        if not visitor_id:
+            visitor_id = f"anonymous-{int(time.time())}"
             
-            # Prepare message data
+        # Log to in-memory messages if Supabase is not available
+        if supabase is None:
+            logging.warning("Supabase client not initialized, using in-memory messages")
+            
+            # Initialize the visitor's message list if it doesn't exist
+            if visitor_id not in in_memory_messages:
+                in_memory_messages[visitor_id] = []
+                
+            # Add the message to the in-memory messages
             message_data = {
+                "id": str(uuid.uuid4()),
                 "message": message,
                 "sender": sender,
-                "response": response,
-                "visitor_id": visitor_id or "anonymous",
-                "visitor_name": visitor_name
+                "visitor_id": visitor_id,
+                "visitor_name": visitor_name,
+                "target_user_id": target_user_id,
+                "chatbot_id": chatbot_id,
+                "timestamp": timestamp
             }
             
-            # Add user_id and chatbot_id if available
-            if target_user_id:
-                message_data["user_id"] = target_user_id
+            # Add response if available
+            if response:
+                message_data["response"] = response
                 
-            if chatbot:
-                message_data["chatbot_id"] = chatbot["id"]
-                
-            # Insert the message
-            response = supabase.table("messages").insert(message_data).execute()
-            if response.data:
-                print(f"Logged chat message to database for user: {target_user_id}")
-                return True
+            in_memory_messages[visitor_id].append(message_data)
+            logging.info(f"Added message to in-memory messages for visitor: {visitor_id}")
             
-            print("No response data from Supabase when logging message")
-            return False
+            return True
         
-        # Fallback to in-memory storage
-        print("Supabase not available, storing message in-memory")
-        in_memory_messages.append({
-            "id": str(uuid.uuid4()),
+        # First, make sure the user has a chatbot or create a default one if needed
+        user_chatbot_id = chatbot_id
+        
+        if target_user_id and not chatbot_id:
+            try:
+                # Check if user has a chatbot
+                chatbot_response = supabase.table("chatbots").select("*").eq("user_id", target_user_id).limit(1).execute()
+                
+                # If user has a chatbot, use it
+                if chatbot_response.data and len(chatbot_response.data) > 0:
+                    user_chatbot_id = chatbot_response.data[0]["id"]
+                    logging.info(f"Found existing chatbot {user_chatbot_id} for user {target_user_id}")
+                else:
+                    # Don't attempt to create a chatbot here - let's use NULL for chatbot_id
+                    # This avoids RLS policy issues while still allowing messages to be stored
+                    logging.info(f"No chatbot found for user {target_user_id}, using NULL for chatbot_id")
+                    user_chatbot_id = None
+            except Exception as e:
+                logging.error(f"Error checking/creating user chatbot: {e}")
+                user_chatbot_id = None
+        
+        # Now log the message
+        message_data = {
             "message": message,
             "sender": sender,
-            "response": response,
-            "visitor_id": visitor_id or "anonymous",
-            "visitor_name": visitor_name,
-            "user_id": target_user_id,
-            "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-        })
-        return True
+            "visitor_id": visitor_id,
+            "chatbot_id": user_chatbot_id
+        }
+        
+        # Add optional fields if available
+        if visitor_name:
+            message_data["visitor_name"] = visitor_name
+            
+        if target_user_id:
+            message_data["user_id"] = target_user_id
+            
+        if response:
+            message_data["response"] = response
+            
+        # Insert into Supabase
+        try:
+            result = supabase.table("messages").insert(message_data).execute()
+            if hasattr(result, 'data') and len(result.data) > 0:
+                logging.info(f"Successfully logged chat message to Supabase: {result.data[0].get('id', 'unknown')}")
+                return True
+            else:
+                logging.warning(f"Unexpected result format when logging message: {result}")
+                return False
+        except Exception as insert_error:
+            logging.error(f"Error logging chat message: {insert_error}")
+            
+            # Try with just the basic fields as a fallback
+            try:
+                basic_message = {
+                    "message": message,
+                    "sender": sender,
+                    "visitor_id": visitor_id
+                }
+                basic_result = supabase.table("messages").insert(basic_message).execute()
+                if hasattr(basic_result, 'data') and len(basic_result.data) > 0:
+                    logging.info(f"Logged chat message with minimal fields: {basic_result.data[0].get('id', 'unknown')}")
+                    return True
+                return False
+            except Exception as basic_error:
+                logging.error(f"Error logging even basic message: {basic_error}")
+                return False
+    
     except Exception as e:
-        print(f"Error logging chat message: {e}")
+        logging.error(f"Error in log_chat_message: {e}")
         return False
 
-def get_chat_history(limit=50, visitor_id=None, target_user_id=None):
-    """
-    Get chat history for a specific visitor or user
-    If target_user_id is provided, get messages associated with that user's chatbot
+def get_chat_history(limit=50, visitor_id=None, target_user_id=None, chatbot_id=None):
+    """Get chat history for a visitor and target user or chatbot
+    
+    Args:
+        limit (int): Maximum number of messages to return
+        visitor_id (str): Visitor ID to filter by
+        target_user_id (str): Target user ID to filter by
+        chatbot_id (str): Chatbot ID to filter by
+        
+    Returns:
+        list: List of chat history items
     """
     try:
-        if supabase:
-            # Build query based on provided filters
-            query = supabase.table("messages").select("*")
+        if supabase is None:
+            logging.warning("Supabase client not initialized, using in-memory messages")
+            history = []
             
-            if target_user_id:
-                # Get all messages from this user's chatbots
-                chatbot_response = supabase.table("chatbots").select("id").eq("user_id", target_user_id).execute()
+            # Filter messages from in_memory_messages matching the visitor_id
+            if visitor_id and visitor_id in in_memory_messages:
+                # Make a deep copy to avoid modifying the original
+                history = copy.deepcopy(in_memory_messages[visitor_id])
                 
-                if chatbot_response.data and len(chatbot_response.data) > 0:
-                    chatbot_ids = [chatbot["id"] for chatbot in chatbot_response.data]
-                    
-                    # Filter by user_id directly or by chatbot_id
-                    query = query.or_(f"user_id.eq.{target_user_id},chatbot_id.in.({','.join(chatbot_ids)})")
-                else:
-                    # If no chatbots found, just filter by user_id
-                    query = query.eq("user_id", target_user_id)
+                # Sort messages by timestamp
+                history = sorted(
+                    history,
+                    key=lambda x: x.get("timestamp", "") if isinstance(x, dict) else "",
+                    reverse=True  # newest messages first
+                )
                 
-            if visitor_id:
-                # Further filter by visitor_id if provided
-                query = query.eq("visitor_id", visitor_id)
+                # Apply limit
+                history = history[:limit]
                 
-            # Order and limit
-            query = query.order("created_at", desc=True).limit(limit)
+            return history
             
-            response = query.execute()
-            
-            if response.data:
-                print(f"Retrieved {len(response.data)} chat messages")
-                # Convert timestamps and return in chronological order
-                messages = sorted(response.data, key=lambda x: x.get('created_at', ''))
-                return {
-                    "count": len(messages),
-                    "history": messages
-                }
-            
-            return {
-                "count": 0,
-                "history": []
-            }
+        logging.info(f"Getting chat history from Supabase: visitor_id={visitor_id}, target_user_id={target_user_id}, limit={limit}")
         
-        # Fallback to in-memory storage
-        print("Supabase not available, retrieving from in-memory storage")
-        filtered_messages = in_memory_messages
+        # Build the query based on available parameters
+        query = supabase.table("messages").select("*")
         
-        if target_user_id:
-            filtered_messages = [msg for msg in filtered_messages if msg.get('user_id') == target_user_id]
-            
+        # Add filters if provided
         if visitor_id:
-            filtered_messages = [msg for msg in filtered_messages if msg.get('visitor_id') == visitor_id]
+            query = query.eq("visitor_id", visitor_id)
             
-        # Sort and limit
-        filtered_messages = sorted(filtered_messages, key=lambda x: x.get('timestamp', ''))
-        limited_messages = filtered_messages[-limit:] if len(filtered_messages) > limit else filtered_messages
+        if target_user_id:
+            query = query.eq("user_id", target_user_id)
+            
+        if chatbot_id:
+            query = query.eq("chatbot_id", chatbot_id)
+            
+        # Add ordering and limit
+        results = query.order("created_at", desc=True).limit(limit).execute()
         
-        return {
-            "count": len(limited_messages),
-            "history": limited_messages
-        }
+        # Extract and format the data
+        if hasattr(results, 'data') and isinstance(results.data, list):
+            history = results.data
+            
+            # Convert timestamps to string format for JSON serialization
+            for item in history:
+                if isinstance(item, dict):
+                    # Ensure timestamp is in string format
+                    if "created_at" in item and item["created_at"]:
+                        item["timestamp"] = item["created_at"]
+                        
+            # Reverse to have oldest messages first for UI display
+            history = list(reversed(history))
+            
+            logging.info(f"Found {len(history)} messages in history")
+            return history
+        else:
+            logging.warning(f"Unexpected result format from Supabase: {type(results)}")
+            return []
+            
     except Exception as e:
-        print(f"Error retrieving chat history: {e}")
-        return {
-            "count": 0,
-            "history": []
-        }
+        logging.error(f"Error fetching chat history: {e}")
+        # Return empty history on error
+        return []
 
 def verify_admin_login(username, password):
     """

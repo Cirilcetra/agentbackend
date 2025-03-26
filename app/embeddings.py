@@ -569,19 +569,57 @@ def generate_ai_response(query, search_results, profile_data=None, chat_history=
     """
     # Combine search results into context
     context = ""
-    if search_results["documents"] and len(search_results["documents"]) > 0 and len(search_results["documents"][0]) > 0:
-        for i, doc in enumerate(search_results["documents"][0]):
-            subcategory = search_results["metadatas"][0][i]["subcategory"]
-            context += f"{subcategory.upper()}: {doc}\n\n"
-        print(f"[INFO] Found {len(search_results['documents'][0])} relevant context items from vector database")
+    
+    # Handle search_results in the newer format (list of dictionaries)
+    if isinstance(search_results, list):
+        if search_results:
+            for result in search_results:
+                if isinstance(result, dict):
+                    content = result.get('content', '')
+                    metadata = result.get('metadata', {})
+                    subcategory = metadata.get('subcategory', 'context')
+                    context += f"{subcategory.upper()}: {content}\n\n"
+            print(f"[INFO] Found {len(search_results)} relevant context items from vector database")
+        else:
+            # If empty list, use a default message
+            context = "No specific information available. Please provide a general response."
+            print("[WARNING] No vector DB results to include in context - response will be limited")
+    
+    # Handle search_results in the old format (dictionary with nested lists)
+    elif isinstance(search_results, dict) and 'documents' in search_results:
+        if (search_results.get('documents') and 
+            isinstance(search_results['documents'], list) and 
+            len(search_results['documents']) > 0 and 
+            isinstance(search_results['documents'][0], list) and
+            len(search_results['documents'][0]) > 0):
+            
+            for i, doc in enumerate(search_results['documents'][0]):
+                # Safe access to metadatas
+                if (isinstance(search_results.get('metadatas'), list) and 
+                    len(search_results['metadatas']) > 0 and 
+                    isinstance(search_results['metadatas'][0], list) and 
+                    i < len(search_results['metadatas'][0])):
+                    
+                    metadata = search_results['metadatas'][0][i]
+                    subcategory = metadata.get('subcategory', 'context') if isinstance(metadata, dict) else 'context'
+                    context += f"{subcategory.upper()}: {doc}\n\n"
+                else:
+                    # Fallback if metadata is not available or not in expected format
+                    context += f"CONTEXT: {doc}\n\n"
+                    
+            print(f"[INFO] Found {len(search_results['documents'][0])} relevant context items from vector database")
+        else:
+            # If no results or incorrect format, use a default message
+            context = "No specific information available. Please provide a general response."
+            print("[WARNING] No vector DB results to include in context - response will be limited")
     else:
-        # If no results, use a default message
+        # Unexpected format, use a default message
         context = "No specific information available. Please provide a general response."
-        print("[WARNING] No vector DB results to include in context - response will be limited")
+        print(f"[WARNING] Unexpected search_results format: {type(search_results)}")
     
     # Extract name from profile data for better personalization
-    user_name = profile_data.get('name', '') if profile_data else ''
-    if not user_name and profile_data and profile_data.get('bio'):
+    user_name = profile_data.get('name', '') if isinstance(profile_data, dict) else ''
+    if not user_name and isinstance(profile_data, dict) and profile_data.get('bio'):
         # Try to extract name from bio if name field is empty
         bio = profile_data.get('bio', '')
         if 'I am ' in bio:
@@ -594,7 +632,7 @@ def generate_ai_response(query, search_results, profile_data=None, chat_history=
     
     # Create a comprehensive profile context
     profile_context = ""
-    if profile_data:
+    if isinstance(profile_data, dict):
         # Extract key information from profile for context
         profile_context = f"""
 NAME: {profile_data.get('name', 'Not provided')}
@@ -612,21 +650,22 @@ INTERESTS: {profile_data.get('interests', 'Not provided')}
                           if profile_data.get(field)]
         print(f"[INFO] Available profile fields: {', '.join(available_fields)}")
     else:
-        print("[WARNING] No profile data available - responses will be generic")
+        print(f"[WARNING] Profile data not in expected format: {type(profile_data)} - responses will be generic")
     
     # Format conversation history if provided
     conversation_context = ""
-    if chat_history and len(chat_history) > 0:
+    if chat_history and isinstance(chat_history, list) and len(chat_history) > 0:
         print(f"[INFO] Including {len(chat_history)} messages from conversation history")
         conversation_context = "PREVIOUS CONVERSATION:\n"
         for i, msg in enumerate(chat_history):
-            if msg.get('sender') == 'user':
-                conversation_context += f"Visitor: {msg.get('message', '')}\n"
-            else:
-                conversation_context += f"You: {msg.get('response', '')}\n"
+            if isinstance(msg, dict):
+                if msg.get('sender') == 'user':
+                    conversation_context += f"Visitor: {msg.get('message', '')}\n"
+                else:
+                    conversation_context += f"You: {msg.get('response', '')}\n"
         conversation_context += "\n"
     else:
-        print("[INFO] No conversation history provided")
+        print(f"[INFO] No conversation history provided or invalid format: {type(chat_history)}")
     
     # Create a strongly worded system prompt that clearly instructs the AI to respond as the user
     system_prompt = f"""
