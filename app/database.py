@@ -125,10 +125,14 @@ def get_profile_data(user_id=None):
             
             # Only apply defaults for fields that are truly missing or null
             for field, default_value in default_values.items():
-                if field not in profile or profile[field] is None or profile[field].strip() == '':
-                    # Only use the default for missing/empty fields
+                if field not in profile or profile[field] is None:
+                    # Only use the default for truly missing/null fields
                     profile[field] = default_value
-                    logging.debug(f"Applied default value for missing field: {field}")
+                    logging.debug(f"Applied default value for missing/null field: {field}")
+                elif isinstance(profile[field], str) and profile[field].strip() == '':
+                    # Only use default for empty strings
+                    profile[field] = default_value
+                    logging.debug(f"Applied default value for empty field: {field}")
             
             # Initialize empty project list if not present
             if 'project_list' not in profile:
@@ -244,13 +248,21 @@ def update_profile_data(data, user_id=None):
             logging.debug(f"Using auth headers: {bool(auth_headers)}")
             
             response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
+            logging.info(f"Found {len(response.data) if response and hasattr(response, 'data') and response.data else 0} profiles for user: {user_id}")
         
             # Prepare profile data (exclude project_list which is stored separately)
             profile_data = {k: v for k, v in data.items() if k != 'project_list' and k != 'id' and k != 'is_default'}
+            
+            # Convert empty strings to None (NULL in database)
+            for key, value in profile_data.items():
+                if isinstance(value, str) and value.strip() == '':
+                    profile_data[key] = None
+                    logging.info(f"Converting empty string to NULL for field: {key}")
+                    
             profile_data['user_id'] = user_id
             profile_data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
             
-            logging.debug(f"Profile data to update: {profile_data}")
+            logging.info(f"Profile data to update: {profile_data}")
             
             if response.data and len(response.data) > 0:
                 # Update existing profile
@@ -262,6 +274,11 @@ def update_profile_data(data, user_id=None):
                     # IMPORTANT: Update the profile using user_id, not profile ID
                     logging.info(f"Updating profile with user_id: {user_id}")
                     logging.debug(f"Data being sent to Supabase: {profile_data}")
+                    
+                    # Log existing data for comparison
+                    logging.info(f"Existing profile data: {existing_profile}")
+                    
+                    # Execute the update
                     update_response = supabase.table("profiles").update(profile_data).eq("user_id", user_id).execute()
                     
                     if not (update_response.data and len(update_response.data) > 0):
@@ -269,14 +286,17 @@ def update_profile_data(data, user_id=None):
                         return {"success": False, "profile": None, "message": "Failed to update profile in database"}
                     
                     logging.info(f"Profile updated successfully by user_id")
+                    logging.debug(f"Update response: {update_response.data[0] if update_response.data else None}")
                     
                     # Get the updated profile data
                     updated_profile_response = supabase.table("profiles").select("*").eq("user_id", user_id).execute()
                     if updated_profile_response.data and len(updated_profile_response.data) > 0:
                         updated_profile = updated_profile_response.data[0]
+                        logging.info(f"Retrieved updated profile: {updated_profile}")
                     else:
                         # Fallback to the profile data we have
                         updated_profile = profile_data
+                        logging.warning("Could not retrieve updated profile, using profile_data as fallback")
                     
                     # Success
                     return {

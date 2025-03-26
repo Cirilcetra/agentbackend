@@ -66,10 +66,24 @@ async def root():
 
 # Get profile data - kept for backward compatibility
 @app.get("/profile")
-async def profile(user_id: Optional[str] = None):
+async def profile(user_id: Optional[str] = None, request: Request = None):
     """Get profile data"""
     try:
         logging.info(f"Getting profile data")
+        
+        # Try to extract user_id from request headers if not provided
+        if not user_id and request and request.headers.get("Authorization"):
+            try:
+                # Extract user_id from auth header
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.replace("Bearer ", "")
+                    # Verify token and extract user_id
+                    user_id = verify_token(token)
+                    logging.info(f"Extracted user_id from auth token: {user_id}")
+            except Exception as auth_error:
+                logging.error(f"Error extracting user_id from auth: {auth_error}")
+        
         profile_data = get_profile_data(user_id=user_id)
         return profile_data
     except Exception as e:
@@ -78,40 +92,69 @@ async def profile(user_id: Optional[str] = None):
 
 # Update profile data (POST endpoint) - kept for backward compatibility
 @app.post("/profile")
-async def update_profile_post(profile_data: ProfileData, user_id: Optional[str] = None):
+async def update_profile_post(profile_data: ProfileData, user_id: Optional[str] = None, request: Request = None):
     """Update profile data using POST"""
-    return await update_profile_handler(profile_data, user_id)
+    return await update_profile_handler(profile_data, user_id, request)
 
 # Update profile data (PUT endpoint for compatibility) - kept for backward compatibility
 @app.put("/profile")
-async def update_profile_put(profile_data: ProfileData, user_id: Optional[str] = None):
+async def update_profile_put(profile_data: ProfileData, user_id: Optional[str] = None, request: Request = None):
     """Update profile data using PUT (for compatibility)"""
-    return await update_profile_handler(profile_data, user_id)
+    return await update_profile_handler(profile_data, user_id, request)
 
 # Shared handler for profile updates
-async def update_profile_handler(profile_data: ProfileData, user_id: Optional[str] = None):
+async def update_profile_handler(profile_data: ProfileData, user_id: Optional[str] = None, request: Request = None):
     """Shared handler for profile updates"""
     try:
+        # Try to extract user_id from request headers if not provided
+        if not user_id and request and request.headers.get("Authorization"):
+            try:
+                # Extract user_id from auth header
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.replace("Bearer ", "")
+                    # Verify token and extract user_id
+                    user_id = verify_token(token)
+                    logging.info(f"Extracted user_id from auth token: {user_id}")
+            except Exception as auth_error:
+                logging.error(f"Error extracting user_id from auth: {auth_error}")
+                
         logging.info(f"Updating profile data for user_id: {user_id}")
         
         if not user_id:
             logging.warning("No user_id provided for profile update")
-            return {
-                "message": "Authentication required to update profile. Please provide user_id.",
-                "success": False,
-                "profile": get_profile_data(None)  # Return default profile
-            }
+            # For testing purposes, use a fixed user_id if in development mode
+            if os.getenv("ENVIRONMENT") != "production":
+                test_user_id = os.getenv("TEST_USER_ID")
+                if test_user_id:
+                    logging.info(f"Using test user_id for development: {test_user_id}")
+                    user_id = test_user_id
+                else:
+                    logging.warning("No TEST_USER_ID environment variable set for development")
+            
+            if not user_id:
+                return {
+                    "message": "Authentication required to update profile. Please provide user_id.",
+                    "success": False,
+                    "profile": get_profile_data(None)  # Return default profile
+                }
         
         # Convert Pydantic model to dict
         profile_dict = profile_data.dict(exclude_unset=True)
         
+        # Ensure all empty string fields are converted to None to prevent overwriting with empty strings
+        for key, value in profile_dict.items():
+            if isinstance(value, str) and value.strip() == '':
+                profile_dict[key] = None
+                logging.info(f"Converting empty string to None for field: {key}")
+        
         # Update profile data in the database
         updated_profile = update_profile_data(profile_dict, user_id=user_id)
         
-        if updated_profile:
+        if updated_profile and updated_profile.get("success", False):
             # Add profile data to vector database
             try:
-                add_profile_to_vector_db(updated_profile, user_id=user_id)
+                add_profile_to_vector_db(updated_profile.get("profile", {}), user_id=user_id)
                 logging.info(f"Added profile to vector database for user: {user_id}")
             except Exception as vector_error:
                 logging.error(f"Error adding profile to vector database: {vector_error}")
@@ -119,12 +162,13 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
             return {
                 "message": "Profile updated successfully", 
                 "success": True,
-                "profile": updated_profile
+                "profile": updated_profile.get("profile", {})
             }
         else:
-            logging.error(f"Failed to update profile for user: {user_id}")
+            error_message = updated_profile.get("message", "Failed to update profile") if updated_profile else "Failed to update profile"
+            logging.error(f"Failed to update profile for user: {user_id}. Error: {error_message}")
             return {
-                "message": "Failed to update profile", 
+                "message": error_message, 
                 "success": False,
                 "profile": get_profile_data(user_id)  # Return current profile
             }
@@ -136,6 +180,28 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
             "success": False,
             "profile": get_profile_data(user_id)  # Return current profile
         }
+
+# Helper function to verify token and extract user_id
+def verify_token(token):
+    """
+    Verify JWT token and extract user_id
+    This is a simplified implementation - in production, you should use a proper JWT library
+    """
+    try:
+        # For Supabase tokens, you would typically use their JWT verification
+        # This is a simplified approach for demonstration
+        if not supabase:
+            return None
+            
+        # Use Supabase client to get user from token
+        user_response = supabase.auth.get_user(token)
+        if user_response and hasattr(user_response, 'user') and user_response.user:
+            return user_response.user.id
+            
+        return None
+    except Exception as e:
+        logging.error(f"Error verifying token: {e}")
+        return None
 
 # Chat endpoint - kept for backward compatibility
 @app.post("/chat")

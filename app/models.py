@@ -98,12 +98,12 @@ class ProfileData(BaseModel):
     user_id: Optional[str] = None
     name: Optional[str] = Field(None, description="User's name")
     location: Optional[str] = Field(None, description="User's location")
-    bio: str
-    skills: str
-    experience: str
-    projects: Optional[str] = None  # Keeping for backward compatibility
+    bio: Optional[str] = Field(None, description="User's bio/about information")
+    skills: Optional[str] = Field(None, description="User's skills")
+    experience: Optional[str] = Field(None, description="User's experience")
+    projects: Optional[str] = Field(None, description="User's projects (kept for backward compatibility)")
     project_list: Optional[List[Project]] = Field(default_factory=list, description="List of projects")
-    interests: str
+    interests: Optional[str] = Field(None, description="User's interests")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     is_default: Optional[bool] = Field(False, description="Whether this is a default profile or a real one")
