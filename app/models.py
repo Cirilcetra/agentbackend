@@ -3,41 +3,15 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
-class ChatMessage(BaseModel):
-    """
-    Model for a chat message in the messages array format
-    """
-    role: str = Field(..., description="The role of the message sender (e.g., 'user', 'assistant')")
-    content: str = Field(..., description="The content of the message")
-
-
 class ChatRequest(BaseModel):
     """
-    Request model for chat endpoint.
-    Supports both direct message format and messages array format.
+    Request model for chat endpoint
     """
-    # Direct message format
-    message: Optional[str] = Field(None, description="The message sent by the user (direct format)")
-    
-    # Messages array format
-    messages: Optional[List[ChatMessage]] = Field(None, description="Array of messages in the conversation")
-    
-    # Common fields
-    visitor_id: Optional[str] = Field(None, description="Unique identifier for the visitor")
+    message: str = Field(..., description="The message sent by the user")
+    visitor_id: str = Field(..., description="Unique identifier for the visitor")
     visitor_name: Optional[str] = Field(None, description="Optional name for the visitor")
     target_user_id: Optional[str] = Field(None, description="Optional target user ID for user-specific chatbots")
     chatbot_id: Optional[str] = Field(None, description="Optional chatbot ID for sending message to a specific chatbot")
-    
-    def get_message(self) -> str:
-        """Extract the user's message from either format"""
-        if self.message:
-            return self.message
-        elif self.messages and len(self.messages) > 0:
-            # Get the last user message from the messages array
-            for msg in reversed(self.messages):
-                if msg.role.lower() == 'user':
-                    return msg.content
-        return ""
 
 
 class ChatResponse(BaseModel):
@@ -102,6 +76,7 @@ class ProfileData(BaseModel):
     interests: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    is_default: Optional[bool] = Field(False, description="Whether this is a default profile or a real one")
 
 
 class AdminLoginRequest(BaseModel):
