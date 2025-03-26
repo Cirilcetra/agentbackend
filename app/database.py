@@ -112,23 +112,23 @@ def get_profile_data(user_id=None):
             profile = response.data[0]
             profile['is_default'] = False  # Indicate this is a real profile
             
-            # Ensure all required fields exist with default values if missing
-            profile_fields = {
-                'bio': in_memory_profile.get('bio', 'I am a software engineer with a passion for building AI and web applications.'),
-                'skills': in_memory_profile.get('skills', 'JavaScript, TypeScript, React, Node.js, Python'),
-                'experience': in_memory_profile.get('experience', '5+ years of experience in software development'),
-                'interests': in_memory_profile.get('interests', 'AI, web development, reading'),
+            # Define default values to use only when fields are missing or null
+            default_values = {
+                'bio': 'I am a software engineer with a passion for building AI and web applications.',
+                'skills': 'JavaScript, TypeScript, React, Node.js, Python',
+                'experience': '5+ years of experience in software development',
+                'interests': 'AI, web development, reading',
                 'name': 'New User',
                 'location': 'Worldwide',
-                'projects': in_memory_profile.get('projects', 'AI-powered applications')
+                'projects': 'AI-powered applications'
             }
             
-            # Apply defaults for any missing fields
-            for field, default_value in profile_fields.items():
-                if field not in profile or profile[field] is None:
-                    # Copy from default profile for missing fields
+            # Only apply defaults for fields that are truly missing or null
+            for field, default_value in default_values.items():
+                if field not in profile or profile[field] is None or profile[field].strip() == '':
+                    # Only use the default for missing/empty fields
                     profile[field] = default_value
-                    logging.info(f"Applied default value for missing field: {field}")
+                    logging.debug(f"Applied default value for missing field: {field}")
             
             # Initialize empty project list if not present
             if 'project_list' not in profile:
@@ -250,6 +250,8 @@ def update_profile_data(data, user_id=None):
             profile_data['user_id'] = user_id
             profile_data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
             
+            logging.debug(f"Profile data to update: {profile_data}")
+            
             if response.data and len(response.data) > 0:
                 # Update existing profile
                 existing_profile = response.data[0]
@@ -259,6 +261,7 @@ def update_profile_data(data, user_id=None):
                 try:
                     # IMPORTANT: Update the profile using user_id, not profile ID
                     logging.info(f"Updating profile with user_id: {user_id}")
+                    logging.debug(f"Data being sent to Supabase: {profile_data}")
                     update_response = supabase.table("profiles").update(profile_data).eq("user_id", user_id).execute()
                     
                     if not (update_response.data and len(update_response.data) > 0):

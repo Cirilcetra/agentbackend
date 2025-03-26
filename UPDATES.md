@@ -26,6 +26,12 @@ We've made significant improvements to the backend code, focusing on fixing issu
    - Added proper validation for required fields
    - Improved handling of optional fields
 
+5. **Database Schema Fixes**:
+   - Removed default values from the profiles table schema that were overriding user updates
+   - Added NULL handling for empty fields to ensure proper updates
+   - Updated database migrations for multi-user support
+   - Added automatic timestamp updating for profile changes
+
 ### Specific File Changes
 
 #### 1. `app/database.py`
@@ -77,6 +83,35 @@ We've made significant improvements to the backend code, focusing on fixing issu
 
 - Increased logging level to DEBUG for more detailed diagnostics
 - Fixed issues in the deprecated profile update endpoints
+
+#### 5. `migrations/schema/001_initial_schema.sql`
+
+- Removed default values from profiles table columns that were causing update issues:
+  ```sql
+  CREATE TABLE profiles (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    bio TEXT,  -- Removed default value
+    skills TEXT,  -- Removed default value
+    experience TEXT,  -- Removed default value
+    interests TEXT,  -- Removed default value
+    name TEXT,  -- Removed default value
+    location TEXT,  -- Removed default value
+    projects TEXT,  -- Removed default value
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id)
+  );
+  ```
+
+- Kept default values in the profile creation trigger to ensure new users get defaults
+
+#### 6. `migrations/schema/002_fix_profile_updates.sql`
+
+- Added new migration file with fixes for the multi-user configuration:
+  - Updated Row Level Security (RLS) policies for profiles
+  - Added automatic timestamp updating for profile changes
+  - Added database migration to reset default profile fields for existing users
 
 ## Frontend Changes Needed
 
@@ -235,6 +270,15 @@ const addProject = async (projectData: ProjectData) => {
    - Look for proper profile querying by user_id
    - Confirm profile updates are using user_id
    - Validate that authentication tokens are being properly used
+
+## Testing and Troubleshooting Tools
+
+We've created a direct testing script (`test_profile_update.py`) that can be used to verify profile updates are working correctly with Supabase. This bypasses the API layer and tests the database connection directly.
+
+You can use this script to:
+1. Verify profile updates are being correctly applied
+2. Debug any database connection issues
+3. Test the multi-user configuration
 
 ## Potential Future Improvements
 

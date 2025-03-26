@@ -65,6 +65,9 @@ async def update_profile(
         # Convert to dict for database
         data_dict = profile_data.dict()
         
+        # Log the exact data we're receiving from the frontend
+        logging.info(f"Received profile update from frontend: {data_dict}")
+        
         # Override user_id with the authenticated user's ID
         data_dict["user_id"] = current_user.id
         
@@ -75,6 +78,13 @@ async def update_profile(
         if "id" in data_dict:
             logging.info(f"Removing id field from profile update data")
             data_dict.pop("id")
+        
+        # Check if any fields are empty strings and convert to None
+        # This helps avoid overwriting with empty strings
+        for key, value in list(data_dict.items()):
+            if isinstance(value, str) and value.strip() == '':
+                logging.info(f"Converting empty string to None for field: {key}")
+                data_dict[key] = None
         
         # Update in database with the authenticated user's ID
         logging.info(f"Updating profile for user {current_user.id}")
