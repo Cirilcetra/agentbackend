@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from typing import Optional, List
 from datetime import datetime
+import logging
 
 from app import models
 from app.database import get_profile_data, update_profile_data, add_project, update_project, delete_project
@@ -52,7 +53,7 @@ async def get_profile(
             detail=f"Failed to get profile data: {str(e)}"
         )
 
-@router.put("/", response_model=models.ProfileData)
+@router.put("/", response_model=dict)
 async def update_profile(
     profile_data: models.ProfileData, 
     current_user: User = Depends(get_current_user),
@@ -71,31 +72,44 @@ async def update_profile(
         data_dict["updated_at"] = datetime.utcnow().isoformat()
         
         # Update in database with the authenticated user's ID
-        print(f"Updating profile for user {current_user.id} with data: {data_dict}")
-        updated_data = update_profile_data(data_dict, user_id=current_user.id)
-        if not updated_data:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to update profile data in database"
-            )
+        logging.info(f"Updating profile for user {current_user.id}")
+        result = update_profile_data(data_dict, user_id=current_user.id)
+        
+        if not result or not result.get("success", False):
+            error_message = result.get("message", "Unknown error updating profile") if result else "Failed to update profile"
+            logging.error(f"Profile update failed: {error_message}")
+            return {
+                "success": False,
+                "message": error_message,
+                "profile": get_profile_data(current_user.id)
+            }
         
         # Add to vector database for search
-        vector_update_success = add_profile_to_vector_db(updated_data, user_id=current_user.id)
-        if not vector_update_success:
-            print("Warning: Failed to update vector database")
+        updated_profile = result.get("profile", {})
+        try:
+            vector_update_success = add_profile_to_vector_db(updated_profile, user_id=current_user.id)
+            if not vector_update_success:
+                logging.warning("Failed to update vector database")
+        except Exception as vector_error:
+            logging.error(f"Error updating vector database: {vector_error}")
         
-        return models.ProfileData(**updated_data)
+        return {
+            "success": True,
+            "message": result.get("message", "Profile updated successfully"),
+            "profile": updated_profile
+        }
     
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error updating profile data: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update profile data: {str(e)}"
-        )
+        logging.error(f"Error updating profile data: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Error updating profile: {str(e)}", 
+            "profile": get_profile_data(current_user.id)
+        }
 
-@router.post("/projects", response_model=models.ProfileData)
+@router.post("/projects", response_model=dict)
 async def create_project(
     project: models.Project,
     current_user: User = Depends(get_current_user),
@@ -108,28 +122,42 @@ async def create_project(
         project_dict = project.dict()
         
         # Add project to database
-        updated_profile = add_project(project_dict, user_id=current_user.id)
-        if not updated_profile:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to add project to profile"
-            )
+        logging.info(f"Adding project for user {current_user.id}")
+        result = add_project(project_dict, user_id=current_user.id)
         
-        # Update vector database
-        vector_update_success = add_profile_to_vector_db(updated_profile, user_id=current_user.id)
-        if not vector_update_success:
-            print("Warning: Failed to update vector database with new project")
+        if not result or not result.get("success", False):
+            error_message = result.get("message", "Unknown error adding project") if result else "Failed to add project"
+            logging.error(f"Project creation failed: {error_message}")
+            return {
+                "success": False,
+                "message": error_message,
+                "profile": get_profile_data(current_user.id)
+            }
         
-        return models.ProfileData(**updated_profile)
+        # Add to vector database for search
+        updated_profile = result.get("profile", {})
+        try:
+            vector_update_success = add_profile_to_vector_db(updated_profile, user_id=current_user.id)
+            if not vector_update_success:
+                logging.warning("Failed to update vector database with new project")
+        except Exception as vector_error:
+            logging.error(f"Error updating vector database: {vector_error}")
+        
+        return {
+            "success": True,
+            "message": result.get("message", "Project added successfully"),
+            "profile": updated_profile
+        }
     
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error adding project: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to add project: {str(e)}"
-        )
+        logging.error(f"Error adding project: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Error adding project: {str(e)}",
+            "profile": get_profile_data(current_user.id)
+        }
 
 @router.put("/projects/{project_id}", response_model=models.ProfileData)
 async def edit_project(
