@@ -7,7 +7,7 @@ import os
 import json
 import uuid
 from app import models
-from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history
+from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history, DEFAULT_PROFILE
 from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
 from app.routes import chatbot, profiles, admin, chatbots
 
@@ -113,17 +113,17 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
 async def chat(chat_request: models.ChatRequest):
     """Process chat messages and generate AI response"""
     try:
-        logging.info(f"Processing chat message")
+        logging.info(f"Processing chat message: {chat_request}")
         
         # Extract visitor information
-        visitor_id = chat_request.visitor_id
+        visitor_id = chat_request.visitor_id or "anonymous"
         visitor_name = chat_request.visitor_name
         target_user_id = chat_request.target_user_id
         
         logging.info(f"Chat request from visitor: {visitor_id}, name: {visitor_name}, user_id: {target_user_id}")
         
-        # Get the message directly from the request
-        message = chat_request.message
+        # Get the message directly from the request using the helper method
+        message = chat_request.get_message()
         
         if not message or message.strip() == "":
             logging.warning("No valid user message found in request")
@@ -132,82 +132,110 @@ async def chat(chat_request: models.ChatRequest):
         logging.info(f"User message: {message[:50]}...")
         
         # Get profile data
-        profile_data = get_profile_data(user_id=target_user_id)
-        logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}")
+        try:
+            profile_data = get_profile_data(user_id=target_user_id)
+            logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}")
+        except Exception as profile_error:
+            logging.error(f"Error retrieving profile data: {profile_error}")
+            # Use a default profile as fallback
+            profile_data = DEFAULT_PROFILE.copy()
+            if target_user_id:
+                profile_data['user_id'] = target_user_id
         
         # Query vector database for relevant information including conversation history
-        logging.info(f"Querying vector DB for relevant context and conversation history")
-        search_results = query_vector_db(
-            query=message, 
-            n_results=3,
-            visitor_id=visitor_id,
-            include_conversation=True
-        )
+        try:
+            logging.info(f"Querying vector DB for relevant context and conversation history")
+            search_results = query_vector_db(
+                query=message, 
+                n_results=3,
+                visitor_id=visitor_id,
+                include_conversation=True
+            )
+        except Exception as vector_error:
+            logging.error(f"Error querying vector database: {vector_error}")
+            search_results = []
         
         # Get sequential conversation history for UI/display context
-        logging.info(f"Getting sequential conversation history for visitor: {visitor_id}")
-        history_limit = 10  # Get last 10 messages (5 exchanges)
-        chat_history = get_chat_history(
-            limit=history_limit,
-            visitor_id=visitor_id,
-            target_user_id=target_user_id
-        )
-        
-        # Extract the history list from the result if it's a dictionary
-        if isinstance(chat_history, dict) and 'history' in chat_history:
-            chat_history = chat_history['history']
-        
-        # Sort history to have oldest messages first
-        if chat_history:
-            chat_history = sorted(
-                chat_history,
-                key=lambda x: x.get("timestamp", ""),
-                reverse=False  # Oldest messages first
+        try:
+            logging.info(f"Getting sequential conversation history for visitor: {visitor_id}")
+            history_limit = 10  # Get last 10 messages (5 exchanges)
+            chat_history_result = get_chat_history(
+                limit=history_limit,
+                visitor_id=visitor_id,
+                target_user_id=target_user_id
             )
-            logging.info(f"Found {len(chat_history)} previous messages in conversation history")
-        else:
-            logging.info("No previous conversation history found")
+            
+            # Extract the history list from the result if it's a dictionary
+            if isinstance(chat_history_result, dict) and 'history' in chat_history_result:
+                chat_history = chat_history_result['history']
+            else:
+                chat_history = chat_history_result if isinstance(chat_history_result, list) else []
+            
+            # Sort history to have oldest messages first
+            if chat_history:
+                chat_history = sorted(
+                    chat_history,
+                    key=lambda x: x.get("timestamp", "") if isinstance(x, dict) else "",
+                    reverse=False  # Oldest messages first
+                )
+                logging.info(f"Found {len(chat_history)} previous messages in conversation history")
+            else:
+                logging.info("No previous conversation history found")
+                chat_history = []
+        except Exception as history_error:
+            logging.error(f"Error retrieving chat history: {history_error}")
             chat_history = []
         
         # Generate AI response using the embeddings.py implementation
-        ai_response = generate_ai_response(
-            message,  # Using the message as the query
-            search_results,
-            profile_data,
-            chat_history
-        )
-        
-        logging.info(f"Generated AI response: {ai_response[:50]}...")
+        try:
+            ai_response = generate_ai_response(
+                message,  # Using the message as the query
+                search_results,
+                profile_data,
+                chat_history
+            )
+            logging.info(f"Generated AI response: {ai_response[:50]}...")
+        except Exception as ai_error:
+            logging.error(f"Error generating AI response: {ai_error}")
+            ai_response = "I'm sorry, I encountered an issue processing your request. Please try again later."
         
         # Log chat interaction
-        logging.info("Saving chat message to database...")
-        chat_log_success = log_chat_message(
-            message=message,
-            sender="user", 
-            response=ai_response,
-            visitor_id=chat_request.visitor_id,
-            visitor_name=chat_request.visitor_name,
-            target_user_id=chat_request.target_user_id
-        )
+        try:
+            logging.info("Saving chat message to database...")
+            chat_log_success = log_chat_message(
+                message=message,
+                sender="user", 
+                response=ai_response,
+                visitor_id=visitor_id,
+                visitor_name=visitor_name,
+                target_user_id=target_user_id
+            )
+        except Exception as log_error:
+            logging.error(f"Error logging chat message: {log_error}")
+            chat_log_success = False
         
         # Generate a message ID for vector DB if not available from database
         message_id = str(uuid.uuid4())
-        logging.info(f"Adding conversation to vector database with message_id: {message_id}")
         
         # Also store the conversation in the vector database for semantic search
-        add_conversation_to_vector_db(
-            message=message,
-            response=ai_response,
-            visitor_id=visitor_id,
-            message_id=message_id
-        )
+        try:
+            logging.info(f"Adding conversation to vector database with message_id: {message_id}")
+            add_conversation_to_vector_db(
+                message=message,
+                response=ai_response,
+                visitor_id=visitor_id,
+                message_id=message_id
+            )
+        except Exception as vector_store_error:
+            logging.error(f"Error storing conversation in vector DB: {vector_store_error}")
         
         logging.info(f"Chat message saved: {chat_log_success}")
         
         return {"response": ai_response}
     except Exception as e:
-        logging.error(f"Error processing chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error processing chat: {str(e)}", exc_info=True)
+        # Return a user-friendly error message
+        return {"response": "I'm sorry, I encountered an error processing your message. Please try again later.", "error": str(e)}
 
 # Get chat history endpoint - kept for backward compatibility
 @app.get("/chat/history")
@@ -217,11 +245,15 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
         logging.info(f"Getting chat history for visitor: {visitor_id}, target: {target_user_id}, limit: {limit}")
         
         # Get chat history
-        history_result = get_chat_history(
-            limit=limit,
-            visitor_id=visitor_id,
-            target_user_id=target_user_id
-        )
+        try:
+            history_result = get_chat_history(
+                limit=limit,
+                visitor_id=visitor_id,
+                target_user_id=target_user_id
+            )
+        except Exception as get_history_error:
+            logging.error(f"Error retrieving chat history from database: {get_history_error}")
+            history_result = {"count": 0, "history": []}
         
         # Extract the history list from the result
         if isinstance(history_result, dict) and 'history' in history_result:
@@ -242,16 +274,21 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
                 logging.warning(f"Unexpected item type in history: {type(item)}")
                 continue
                 
-            formatted_history.append(models.ChatHistoryItem(
-                id=item.get("id", "unknown"),
-                message=item.get("message", ""),
-                sender=item.get("sender", "unknown"),
-                response=item.get("response"),
-                visitor_id=item.get("visitor_id", "unknown"),
-                visitor_name=item.get("visitor_name"),
-                target_user_id=item.get("target_user_id"),
-                timestamp=item.get("timestamp", "")
-            ))
+            try:
+                formatted_history.append(models.ChatHistoryItem(
+                    id=item.get("id", "unknown"),
+                    message=item.get("message", ""),
+                    sender=item.get("sender", "unknown"),
+                    response=item.get("response"),
+                    visitor_id=item.get("visitor_id", "unknown"),
+                    visitor_name=item.get("visitor_name"),
+                    target_user_id=item.get("target_user_id", target_user_id),
+                    timestamp=item.get("timestamp", "") or item.get("created_at", "")
+                ))
+            except Exception as format_error:
+                logging.error(f"Error formatting history item: {format_error}, item: {item}")
+                # Skip this item and continue
+                continue
         
         response = models.ChatHistoryResponse(
             history=formatted_history,
@@ -262,8 +299,12 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
         return response
         
     except Exception as e:
-        logging.error(f"Error getting chat history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error getting chat history: {str(e)}", exc_info=True)
+        # Return an empty history instead of an error
+        return models.ChatHistoryResponse(
+            history=[],
+            count=0
+        )
 
 # Run the application with uvicorn
 if __name__ == "__main__":
