@@ -3,15 +3,41 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
+class ChatMessage(BaseModel):
+    """
+    Model for a chat message in the messages array format
+    """
+    role: str = Field(..., description="The role of the message sender (e.g., 'user', 'assistant')")
+    content: str = Field(..., description="The content of the message")
+
+
 class ChatRequest(BaseModel):
     """
-    Request model for chat endpoint
+    Request model for chat endpoint.
+    Supports both direct message format and messages array format.
     """
-    message: str = Field(..., description="The message sent by the user")
-    visitor_id: str = Field(..., description="Unique identifier for the visitor")
+    # Direct message format
+    message: Optional[str] = Field(None, description="The message sent by the user (direct format)")
+    
+    # Messages array format
+    messages: Optional[List[ChatMessage]] = Field(None, description="Array of messages in the conversation")
+    
+    # Common fields
+    visitor_id: Optional[str] = Field(None, description="Unique identifier for the visitor")
     visitor_name: Optional[str] = Field(None, description="Optional name for the visitor")
     target_user_id: Optional[str] = Field(None, description="Optional target user ID for user-specific chatbots")
     chatbot_id: Optional[str] = Field(None, description="Optional chatbot ID for sending message to a specific chatbot")
+    
+    def get_message(self) -> str:
+        """Extract the user's message from either format"""
+        if self.message:
+            return self.message
+        elif self.messages and len(self.messages) > 0:
+            # Get the last user message from the messages array
+            for msg in reversed(self.messages):
+                if msg.role.lower() == 'user':
+                    return msg.content
+        return ""
 
 
 class ChatResponse(BaseModel):
@@ -19,7 +45,9 @@ class ChatResponse(BaseModel):
     Response model for chat endpoint
     """
     response: str = Field(..., description="The response from the AI assistant")
-    query_time_ms: float = Field(..., description="Time taken to process the query in milliseconds")
+    query_time_ms: Optional[float] = Field(None, description="Time taken to process the query in milliseconds")
+    success: bool = Field(True, description="Whether the request was successful")
+    message: Optional[str] = Field(None, description="Additional information about the response")
 
 
 class ChatHistoryItem(BaseModel):
@@ -41,7 +69,9 @@ class ChatHistoryResponse(BaseModel):
     Response model for chat history endpoint
     """
     history: List[ChatHistoryItem] = Field(default_factory=list)
-    count: int
+    count: int = Field(0, description="Total number of history items returned")
+    success: bool = Field(True, description="Whether the request was successful")
+    message: Optional[str] = Field(None, description="Additional information about the response")
 
 
 class Project(BaseModel):

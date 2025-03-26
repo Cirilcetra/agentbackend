@@ -147,12 +147,35 @@ async def chat(chat_request: models.ChatRequest):
         # Extract visitor information
         visitor_id = chat_request.visitor_id or "anonymous"
         visitor_name = chat_request.visitor_name
+        
+        # Important: target_user_id should be the auth.users.id value
+        # This is the user whose profile/chatbot the visitor is interacting with
         target_user_id = chat_request.target_user_id
         
-        logging.info(f"Chat request from visitor: {visitor_id}, name: {visitor_name}, user_id: {target_user_id}")
+        if not target_user_id:
+            logging.warning("No target_user_id provided, chat will use default profile")
+        else:
+            logging.info(f"Chat directed to user profile: {target_user_id}")
         
-        # Get the message directly from the request using the helper method
-        message = chat_request.get_message()
+        logging.info(f"Chat request from visitor: {visitor_id}, name: {visitor_name}, target user: {target_user_id}")
+        
+        # Extract the message from the chat request
+        if hasattr(chat_request, 'get_message') and callable(getattr(chat_request, 'get_message')):
+            # New format with get_message method
+            message = chat_request.get_message()
+        elif hasattr(chat_request, 'message') and chat_request.message:
+            # Legacy format with direct message field
+            message = chat_request.message
+        elif hasattr(chat_request, 'messages') and chat_request.messages:
+            # Try to get last user message from messages array
+            for msg in reversed(chat_request.messages):
+                if msg.role.lower() == 'user':
+                    message = msg.content
+                    break
+            else:
+                message = ""
+        else:
+            message = ""
         
         if not message or message.strip() == "":
             logging.warning("No valid user message found in request")
@@ -160,14 +183,18 @@ async def chat(chat_request: models.ChatRequest):
         
         logging.info(f"User message: {message[:50]}...")
         
-        # Get profile data
+        # Get profile data for the target user (will use default if not found)
         try:
             profile_data = get_profile_data(user_id=target_user_id)
-            logging.info(f"Retrieved profile data: {profile_data.get('id', 'No ID')}")
+            if profile_data.get('is_default', True):
+                logging.info(f"Using default profile data (no user profile found)")
+            else:
+                logging.info(f"Retrieved profile data for user: {target_user_id}")
         except Exception as profile_error:
             logging.error(f"Error retrieving profile data: {profile_error}")
             # Use a default profile as fallback
             profile_data = DEFAULT_PROFILE.copy()
+            profile_data['is_default'] = True
             if target_user_id:
                 profile_data['user_id'] = target_user_id
         
@@ -177,6 +204,7 @@ async def chat(chat_request: models.ChatRequest):
             search_results = query_vector_db(
                 query=message, 
                 n_results=3,
+                user_id=target_user_id,  # Use target_user_id for user-specific collections
                 visitor_id=visitor_id,
                 include_conversation=True
             )
@@ -194,7 +222,7 @@ async def chat(chat_request: models.ChatRequest):
                 target_user_id=target_user_id
             )
             
-            # Extract the history list from the result if it's a dictionary
+            # Ensure chat_history is a list (chat_history_result format was changed)
             if isinstance(chat_history_result, dict) and 'history' in chat_history_result:
                 chat_history = chat_history_result['history']
             else:
@@ -228,22 +256,23 @@ async def chat(chat_request: models.ChatRequest):
             logging.error(f"Error generating AI response: {ai_error}")
             ai_response = "I'm sorry, I encountered an issue processing your request. Please try again later."
         
-        # Log chat interaction
+        # Log chat interaction - Critical to pass the correct target_user_id
         try:
-            logging.info("Saving chat message to database...")
+            logging.info(f"Saving chat message to database for target user: {target_user_id}")
             chat_log_success = log_chat_message(
                 message=message,
                 sender="user", 
                 response=ai_response,
                 visitor_id=visitor_id,
                 visitor_name=visitor_name,
-                target_user_id=target_user_id
+                target_user_id=target_user_id  # This is the auth.users.id
             )
+            logging.info(f"Chat message saved successfully: {chat_log_success}")
         except Exception as log_error:
             logging.error(f"Error logging chat message: {log_error}")
             chat_log_success = False
         
-        # Generate a message ID for vector DB if not available from database
+        # Generate a message ID for vector DB
         message_id = str(uuid.uuid4())
         
         # Also store the conversation in the vector database for semantic search
@@ -253,13 +282,13 @@ async def chat(chat_request: models.ChatRequest):
                 message=message,
                 response=ai_response,
                 visitor_id=visitor_id,
-                message_id=message_id
+                message_id=message_id,
+                user_id=target_user_id  # Pass target_user_id for user-specific collections
             )
         except Exception as vector_store_error:
             logging.error(f"Error storing conversation in vector DB: {vector_store_error}")
         
-        logging.info(f"Chat message saved: {chat_log_success}")
-        
+        # Return the response to the user
         return {"response": ai_response}
     except Exception as e:
         logging.error(f"Error processing chat: {str(e)}", exc_info=True)
@@ -271,38 +300,44 @@ async def chat(chat_request: models.ChatRequest):
 async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str] = None, limit: int = 50):
     """Get chat history"""
     try:
-        logging.info(f"Getting chat history for visitor: {visitor_id}, target: {target_user_id}, limit: {limit}")
+        logging.info(f"Getting chat history for visitor: {visitor_id}, target user: {target_user_id}, limit: {limit}")
         
-        # Get chat history with error handling
+        # Verify at least one filter is provided
+        if not visitor_id and not target_user_id:
+            logging.warning("No visitor_id or target_user_id provided - cannot fetch history")
+            return models.ChatHistoryResponse(
+                history=[],
+                count=0,
+                success=False,
+                message="Please provide either visitor_id or target_user_id"
+            )
+        
+        # Get chat history with appropriate error handling
         try:
             history_result = get_chat_history(
                 limit=limit,
                 visitor_id=visitor_id,
                 target_user_id=target_user_id
             )
+            
+            # Ensure history_result is a list
+            if not isinstance(history_result, list):
+                logging.error(f"Unexpected history result type: {type(history_result)}")
+                history_result = []
+                
+            logging.info(f"Successfully retrieved {len(history_result)} history items")
         except Exception as get_history_error:
             logging.error(f"Error retrieving chat history from database: {get_history_error}")
             # Return empty history instead of failing
             return models.ChatHistoryResponse(
                 history=[],
-                count=0
+                count=0,
+                success=False,
+                message=f"Error retrieving chat history: {str(get_history_error)}"
             )
         
-        # Convert each history item to a ChatHistoryItem model
+        # Convert history items to ChatHistoryItem model format
         formatted_history = []
-        
-        # Ensure history_result is a list
-        if not isinstance(history_result, list):
-            logging.warning(f"Unexpected history result type: {type(history_result)}")
-            # Try to extract history list if it's a dict
-            if isinstance(history_result, dict) and 'history' in history_result:
-                history_result = history_result['history']
-            else:
-                # If we can't extract a valid list, return empty
-                return models.ChatHistoryResponse(
-                    history=[],
-                    count=0
-                )
         
         # Process each history item
         for item in history_result:
@@ -328,10 +363,21 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
                 # Skip this item and continue to the next
                 continue
         
+        # Sort by timestamp if available (newest first for display)
+        try:
+            formatted_history.sort(
+                key=lambda x: x.timestamp if x.timestamp else "",
+                reverse=True  # newest first
+            )
+        except Exception as sort_error:
+            logging.error(f"Error sorting history: {sort_error}")
+        
         # Create the response
         response = models.ChatHistoryResponse(
             history=formatted_history,
-            count=len(formatted_history)
+            count=len(formatted_history),
+            success=True,
+            message=f"Retrieved {len(formatted_history)} messages"
         )
         
         logging.info(f"Returning chat history with {len(formatted_history)} items")
@@ -341,7 +387,9 @@ async def history(visitor_id: Optional[str] = None, target_user_id: Optional[str
         # Always return a valid response, even on error
         return models.ChatHistoryResponse(
             history=[],
-            count=0
+            count=0,
+            success=False,
+            message=f"Error: {str(e)}"
         )
 
 # Run the application with uvicorn
