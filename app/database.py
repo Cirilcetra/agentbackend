@@ -51,12 +51,13 @@ in_memory_messages = []
 def get_profile_data(user_id=None):
     """
     Get the profile data from Supabase for a specific user
-    If user_id is not provided, return error
+    If user_id is not provided, return default profile
     """
     try:
         if not user_id:
-            print("Error: user_id is required to fetch profile data")
-            return None
+            print("Warning: No user_id provided, using default profile data")
+            # Return the default in-memory profile
+            return in_memory_profile.copy()
             
         if supabase:
             # Query for the specific user's profile
@@ -77,15 +78,25 @@ def get_profile_data(user_id=None):
                     
                 return profile
             else:
-                print(f"No profile found for user: {user_id}")
-                return None
+                print(f"No profile found for user: {user_id}, using default profile")
+                # If no profile found for this user, create a copy of the default with the user_id set
+                default_profile = in_memory_profile.copy()
+                default_profile['user_id'] = user_id
+                return default_profile
         
         # Fallback to in-memory profile if Supabase is not available
         print("Supabase is not available, using in-memory profile")
-        return in_memory_profile.copy()
+        default_profile = in_memory_profile.copy()
+        if user_id:
+            default_profile['user_id'] = user_id
+        return default_profile
     except Exception as e:
         print(f"Error fetching profile data: {e}")
-        return None
+        # Return default profile on error
+        default_profile = in_memory_profile.copy()
+        if user_id:
+            default_profile['user_id'] = user_id
+        return default_profile
 
 def save_profile_to_file():
     """Save the in-memory profile to a file for persistence"""

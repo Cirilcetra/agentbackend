@@ -153,6 +153,10 @@ async def chat(chat_request: models.ChatRequest):
             target_user_id=target_user_id
         )
         
+        # Extract the history list from the result if it's a dictionary
+        if isinstance(chat_history, dict) and 'history' in chat_history:
+            chat_history = chat_history['history']
+        
         # Sort history to have oldest messages first
         if chat_history:
             chat_history = sorted(
@@ -177,7 +181,7 @@ async def chat(chat_request: models.ChatRequest):
         
         # Log chat interaction
         logging.info("Saving chat message to database...")
-        chat_log_result = log_chat_message(
+        chat_log_success = log_chat_message(
             message=message,
             sender="user", 
             response=ai_response,
@@ -186,9 +190,11 @@ async def chat(chat_request: models.ChatRequest):
             target_user_id=chat_request.target_user_id
         )
         
+        # Generate a message ID for vector DB if not available from database
+        message_id = str(uuid.uuid4())
+        logging.info(f"Adding conversation to vector database with message_id: {message_id}")
+        
         # Also store the conversation in the vector database for semantic search
-        message_id = chat_log_result[0]["id"] if chat_log_result and len(chat_log_result) > 0 else None
-        logging.info(f"Adding conversation to vector database for future reference")
         add_conversation_to_vector_db(
             message=message,
             response=ai_response,
@@ -196,7 +202,7 @@ async def chat(chat_request: models.ChatRequest):
             message_id=message_id
         )
         
-        logging.info(f"Chat message saved: {chat_log_result is not None}")
+        logging.info(f"Chat message saved: {chat_log_success}")
         
         return {"response": ai_response}
     except Exception as e:
