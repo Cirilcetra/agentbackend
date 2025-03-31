@@ -1,6 +1,6 @@
 [build]
 builder = "DOCKERFILE"
-dockerfile = "Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 # Use the CMD from Dockerfile instead of overriding it
@@ -11,6 +11,7 @@ restartPolicyMaxRetries = 10
 
 [var]
 RAILWAY_ENVIRONMENT = "true"
+PORT = "8000"
 # IMPORTANT: DO NOT add sensitive variables here!
 # Add these variables through the Railway dashboard:
 # https://railway.app/dashboard > Your Project > Variables
