@@ -60,18 +60,11 @@ def check_environment():
     
     # Special focus on OpenAI API key
     openai_key = os.environ.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        logger.info(f"OpenAI API Key appears to be set with length: {len(openai_key)}")
-        if len(openai_key) < 20:
-            logger.warning(f"OpenAI API Key seems too short - may be invalid")
-        if openai_key.startswith(("'", '"')) or openai_key.endswith(("'", '"')):
-            logger.warning(f"OpenAI API Key contains quotes - this may cause issues")
-    else:
-        logger.warning("OpenAI API Key is not set - application will run in demo mode")
-        # Try to find keys with similar names
-        for key in os.environ.keys():
-            if 'openai' in key.lower() or 'api' in key.lower():
-                logger.info(f"Found possible related key: {key}")
+    if not openai_key:
+        logger.error("❌ OPENAI_API_KEY not found in environment variables!")
+        return False
+    logger.info("✓ OPENAI_API_KEY found")
+    return True
 
 def start_server():
     """Start the uvicorn server with proper port handling"""
@@ -79,15 +72,15 @@ def start_server():
         # Check environment
         check_environment()
         
-        # Get PORT from environment variable with fallback to 8000
-        port = os.environ.get("PORT", "8000")
+        # Get PORT from environment variable with fallback to 8080
+        port = os.environ.get("PORT", "8080")
         
         # Ensure PORT is an integer
         try:
             port = int(port)
         except ValueError:
-            logger.warning(f"Invalid PORT value: {port}, using default 8000")
-            port = 8000
+            logger.warning(f"Invalid PORT value: {port}, using default 8080")
+            port = 8080
         
         logger.info(f"Starting server on port {port}")
         

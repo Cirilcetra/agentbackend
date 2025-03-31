@@ -28,7 +28,7 @@ These improvements allow multiple users to have their own AI agents that respond
    ```
 4. Run the development server:
    ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
    ```
 
 ## Railway Deployment
