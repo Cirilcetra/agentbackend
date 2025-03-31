@@ -11,10 +11,9 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
 
 # Expose port
 EXPOSE 8000
 
-# Run directly using python instead of uvicorn
-CMD ["python", "-m", "app.main"] 
+# Run the special Railway script that handles port correctly
+CMD ["python", "railway.py"] 
