@@ -11,9 +11,10 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
 # Expose port
-EXPOSE 8080
+EXPOSE ${PORT}
 
-# Start the application with a fixed port
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"] 
+# Command to run the application with debug logging
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --log-level debug 
