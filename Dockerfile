@@ -11,15 +11,10 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
-# Make entrypoint script executable
-RUN chmod +x /app/entrypoint.sh
-
-# Expose port (will use fixed port 8000)
+# Expose port
 EXPOSE 8000
 
-# Debug - show contents of entrypoint script
-RUN cat /app/entrypoint.sh
-
-# Use the entrypoint script
-ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"] 
+# Run directly using python instead of uvicorn
+CMD ["python", "-m", "app.main"] 
