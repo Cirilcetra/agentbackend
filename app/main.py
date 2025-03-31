@@ -583,6 +583,11 @@ async def emergency_chat(request: Request):
 async def check_chat():
     return {"status": "ok", "emergency_mode": EMERGENCY_MODE}
 
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": time.time()}
+
 # Run the application with uvicorn
 if __name__ == "__main__":
     import uvicorn

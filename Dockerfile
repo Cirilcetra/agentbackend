@@ -9,8 +9,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the code
 COPY . .
 
-# Expose port
-EXPOSE ${PORT:-8000}
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
-# Command to run the application
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} 
+# Expose port
+EXPOSE ${PORT}
+
+# Command to run the application with debug logging
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --log-level debug 
