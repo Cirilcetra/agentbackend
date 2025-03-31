@@ -11,12 +11,13 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
 # Make start script executable
 RUN chmod +x /app/start.sh
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
 # Use shell form to ensure environment variable expansion
-CMD /app/start.sh 
+CMD ["/bin/bash", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"] 
