@@ -11,10 +11,12 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
 
-# Expose port
-EXPOSE ${PORT}
+# Make entrypoint script executable
+RUN chmod +x /app/entrypoint.sh
 
-# Command to run the application with debug logging
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --log-level debug 
+# Expose port (will use the PORT env var at runtime)
+EXPOSE 8000
+
+# Use the entrypoint script to properly handle PORT env var
+ENTRYPOINT ["/app/entrypoint.sh"] 

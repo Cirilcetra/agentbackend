@@ -161,7 +161,7 @@ class ChatRequest(BaseModel):
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the AIChat API"}
+    return {"status": "healthy", "message": "Welcome to the AIChat API", "timestamp": time.time()}
 
 # Get profile data - kept for backward compatibility
 @app.get("/profile")
