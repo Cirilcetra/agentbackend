@@ -15,5 +15,5 @@ ENV PYTHONUNBUFFERED=1
 # Expose port (will be overridden by Railway's PORT)
 EXPOSE 8080
 
-# Run the application with exec form and shell wrapper for env var expansion
-CMD ["/bin/sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level debug"] 
+# Run the application
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level debug 
