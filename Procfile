@@ -1,1 +1,1 @@
-web: python railway.py 
+web: ./start.sh 

@@ -12,8 +12,11 @@ COPY . .
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
+# Make start script executable
+RUN chmod +x /app/start.sh
+
 # Expose port
 EXPOSE 8000
 
-# Run the special Railway script that handles port correctly
-CMD ["python", "railway.py"] 
+# Use shell form to ensure environment variable expansion
+CMD /app/start.sh 
