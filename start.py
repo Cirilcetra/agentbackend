@@ -78,7 +78,9 @@ def start_server():
         # Ensure PORT is an integer
         try:
             port = int(port)
-        except ValueError:
+            if port <= 0:
+                raise ValueError(f"Port must be positive, got {port}")
+        except ValueError as e:
             logger.warning(f"Invalid PORT value: {port}, using default 8080")
             port = 8080
         
@@ -90,7 +92,8 @@ def start_server():
             "app.main:app", 
             "--host", "0.0.0.0", 
             "--port", str(port),
-            "--workers", "1"
+            "--workers", "1",
+            "--log-level", "debug"
         ]
         
         # Start the server
