@@ -16,5 +16,5 @@ ENV PORT=8080
 # Expose port (will be overridden by Railway's PORT)
 EXPOSE ${PORT}
 
-# Run the application with shell form to allow env var expansion
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --log-level debug 
+# Run the application with exec form and shell wrapper for env var expansion
+CMD ["/bin/sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --log-level debug"] 
