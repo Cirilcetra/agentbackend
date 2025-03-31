@@ -1,11 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from typing import Optional
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 from app import models
-from app.database import supabase
+from app.database import supabase, get_chat_history
 
 router = APIRouter()
 
@@ -108,4 +108,30 @@ async def create_admin(admin_data: models.AdminCreateRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create user: {str(e)}"
+        )
+
+@router.get("/chat/history", response_model=models.ChatHistoryResponse)
+async def get_admin_chat_history(
+    limit: int = Query(1000, description="Maximum number of messages to return"),
+    user = Depends(verify_admin_token)
+):
+    """
+    Get all chat history for authenticated users
+    """
+    try:
+        # Get chat history without any filters since this is an admin endpoint
+        history = get_chat_history(limit=limit)
+        
+        if not history:
+            history = []
+            
+        return models.ChatHistoryResponse(
+            success=True,
+            history=history
+        )
+    except Exception as e:
+        print(f"Error getting admin chat history: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get chat history: {str(e)}"
         ) 
