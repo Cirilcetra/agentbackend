@@ -4,14 +4,13 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 # Use the CMD from Dockerfile instead of overriding it
-healthcheckPath = "/"
+healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
 [var]
 RAILWAY_ENVIRONMENT = "true"
-PORT = "8000"
 # IMPORTANT: DO NOT add sensitive variables here!
 # Add these variables through the Railway dashboard:
 # https://railway.app/dashboard > Your Project > Variables
@@ -20,4 +19,10 @@ PORT = "8000"
 # - OPENAI_API_KEY
 # - SUPABASE_URL
 # - SUPABASE_KEY
-# - DATABASE_URL 
+# - DATABASE_URL
+#
+# Required environment variables:
+# OPENAI_API_KEY - Your OpenAI API key
+# SUPABASE_URL - Your Supabase project URL
+# SUPABASE_KEY - Your Supabase project key
+# DATABASE_URL - Your database connection string 

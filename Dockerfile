@@ -13,7 +13,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
-# Use shell form to ensure environment variable expansion
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level debug 
+# Run the application with exec form
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "debug"] 
