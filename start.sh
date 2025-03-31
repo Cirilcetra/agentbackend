@@ -6,10 +6,10 @@ env
 
 # Set default port if not provided
 if [ -z "$PORT" ]; then
-    PORT=8000
+    PORT=8080
 fi
 
 echo "Using port: $PORT"
 
 # Start the application
-exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" 
+exec uvicorn app.main:app --host 0.0.0.0 --port 8080 
