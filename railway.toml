@@ -11,6 +11,12 @@ restartPolicyMaxRetries = 10
 
 [var]
 RAILWAY_ENVIRONMENT = "true"
+# Railway automatically sets PORT environment variable
+# Other required variables:
+# OPENAI_API_KEY - Your OpenAI API key
+# SUPABASE_URL - Your Supabase project URL
+# SUPABASE_KEY - Your Supabase project key
+# DATABASE_URL - Your database connection string
 # IMPORTANT: DO NOT add sensitive variables here!
 # Add these variables through the Railway dashboard:
 # https://railway.app/dashboard > Your Project > Variables
