@@ -158,10 +158,14 @@ class ChatRequest(BaseModel):
     visitor_name: Optional[str] = None
     chatbot_id: Optional[str] = None
 
-# Root endpoint
+# Root endpoint with explicit handling for any exceptions
 @app.get("/")
 async def root():
-    return {"status": "healthy", "message": "Welcome to the AIChat API", "timestamp": time.time()}
+    try:
+        return {"status": "healthy", "message": "Welcome to the AIChat API", "timestamp": time.time()}
+    except Exception as e:
+        logging.error(f"Error in root endpoint: {str(e)}")
+        return {"status": "error", "message": "Error occurred in root endpoint"}
 
 # Get profile data - kept for backward compatibility
 @app.get("/profile")

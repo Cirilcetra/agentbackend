@@ -15,8 +15,11 @@ ENV PYTHONUNBUFFERED=1
 # Make entrypoint script executable
 RUN chmod +x /app/entrypoint.sh
 
-# Expose port (will use the PORT env var at runtime)
+# Expose port (will use fixed port 8000)
 EXPOSE 8000
 
-# Use the entrypoint script to properly handle PORT env var
-ENTRYPOINT ["/app/entrypoint.sh"] 
+# Debug - show contents of entrypoint script
+RUN cat /app/entrypoint.sh
+
+# Use the entrypoint script
+ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"] 
