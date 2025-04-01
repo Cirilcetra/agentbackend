@@ -11,9 +11,10 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
 # Expose port (will be overridden by Railway's PORT)
 EXPOSE 8080
 
-# Run the application using our start script
-CMD ["python", "start.py"] 
+# Run the application
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --log-level debug 
