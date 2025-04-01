@@ -72,16 +72,26 @@ def start_server():
         # Check environment
         check_environment()
         
-        # Get PORT from environment variable with fallback to 8080
-        port = os.environ.get("PORT", "8080")
+        # Get PORT from environment variables, trying multiple methods
+        port = None
         
-        # Ensure PORT is an integer
-        try:
-            port = int(port)
-            if port <= 0:
-                raise ValueError(f"Port must be positive, got {port}")
-        except ValueError as e:
-            logger.warning(f"Invalid PORT value: {port}, using default 8080")
+        # Try different environment variable access methods
+        for get_port in [
+            lambda: os.environ.get("PORT"),
+            lambda: os.getenv("PORT"),
+            lambda: "8080"  # Default fallback
+        ]:
+            try:
+                port_str = get_port()
+                if port_str:
+                    port = int(port_str)
+                    if port > 0:
+                        break
+            except (ValueError, TypeError):
+                continue
+        
+        if not port:
+            logger.warning("Could not determine valid port, using default 8080")
             port = 8080
         
         logger.info(f"Starting server on port {port}")
