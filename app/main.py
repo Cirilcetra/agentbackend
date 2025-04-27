@@ -118,9 +118,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(AuthMiddleware)
 
 # Add CORS middleware
+allowed_origins = [
+    "http://localhost:3000",                                           # Local development
+    "https://agentclone-9gfdyhwxp-cirils-projects-86482382.vercel.app" # Your specific Vercel deployment
+]
+
+# Add any additional origins from environment variable if set
+cors_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+if cors_origins_env:
+    additional_origins = [origin.strip() for origin in cors_origins_env.split(",")]
+    allowed_origins.extend(additional_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
