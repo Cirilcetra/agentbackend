@@ -3,23 +3,14 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
-class ChatMessage(BaseModel):
-    """
-    Model for a chat message in the messages array format
-    """
-    role: str = Field(..., description="The role of the message sender (e.g., 'user', 'assistant')")
-    content: str = Field(..., description="The content of the message")
-
-
 class ChatRequest(BaseModel):
     """
-    Model for chat request
+    Request model for chat endpoint
     """
-    message: str = Field(..., description="The user's message")
-    visitor_id: Optional[str] = Field(None, description="Optional visitor ID for anonymous visitors") 
-    visitor_name: Optional[str] = Field(None, description="Optional visitor name")
-    target_user_id: Optional[str] = Field(None, description="Target user ID (auth.users.id of the portfolio owner)")
-    chatbot_id: Optional[str] = Field(None, description="Optional chatbot ID for routing to specific chatbot")
+    message: str = Field(..., description="The message sent by the user")
+    visitor_id: str = Field(..., description="Unique identifier for the visitor")
+    visitor_name: Optional[str] = Field(None, description="Optional name for the visitor")
+    chatbot_id: str = Field(..., description="Identifier for the specific chatbot to chat with")
 
 
 class ChatResponse(BaseModel):
@@ -27,9 +18,7 @@ class ChatResponse(BaseModel):
     Response model for chat endpoint
     """
     response: str = Field(..., description="The response from the AI assistant")
-    query_time_ms: Optional[float] = Field(None, description="Time taken to process the query in milliseconds")
-    success: bool = Field(True, description="Whether the request was successful")
-    message: Optional[str] = Field(None, description="Additional information about the response")
+    query_time_ms: float = Field(..., description="Time taken to process the query in milliseconds")
 
 
 class ChatHistoryItem(BaseModel):
@@ -42,7 +31,6 @@ class ChatHistoryItem(BaseModel):
     response: Optional[str] = None
     visitor_id: str
     visitor_name: Optional[str] = None
-    target_user_id: Optional[str] = None
     timestamp: str
 
 
@@ -50,26 +38,14 @@ class ChatHistoryResponse(BaseModel):
     """
     Response model for chat history endpoint
     """
-    history: List[ChatHistoryItem] = Field(default_factory=list)
-    count: int = Field(0, description="Total number of history items returned")
     success: bool = Field(True, description="Whether the request was successful")
-    message: Optional[str] = Field(None, description="Additional information about the response")
+    history: List[ChatHistoryItem] = Field(default_factory=list)
+    count: Optional[int] = Field(None, description="Total number of messages")
 
 
-class Project(BaseModel):
-    """
-    Model for a project
-    """
-    id: Optional[str] = None
-    user_id: Optional[str] = None
-    title: str = Field(..., description="Project title")
-    description: str = Field(..., description="Project description")
-    category: str = Field(..., description="Project category (tech, design, other)")
-    details: str = Field(..., description="Project details")
-    content: Optional[str] = Field(None, description="Rich document content in Lexical format")
-    content_html: Optional[str] = Field(None, description="HTML representation of the Lexical content for fallback display")
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+class Settings(BaseModel):
+    # Settings fields...
+    pass
 
 
 class ProfileData(BaseModel):
@@ -80,15 +56,40 @@ class ProfileData(BaseModel):
     user_id: Optional[str] = None
     name: Optional[str] = Field(None, description="User's name")
     location: Optional[str] = Field(None, description="User's location")
-    bio: Optional[str] = Field(None, description="User's bio/about information")
-    skills: Optional[str] = Field(None, description="User's skills")
-    experience: Optional[str] = Field(None, description="User's experience")
-    projects: Optional[str] = Field(None, description="User's projects (kept for backward compatibility)")
-    project_list: Optional[List[Project]] = Field(default_factory=list, description="List of projects")
-    interests: Optional[str] = Field(None, description="User's interests")
+    bio: str
+    skills: str
+    experience: str
+    interests: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    is_default: Optional[bool] = Field(False, description="Whether this is a default profile or a real one")
+    calendly_link: Optional[str] = Field(None, description="Calendly link")
+
+
+class ChatbotModel(BaseModel):
+    """
+    Model for a chatbot
+    """
+    id: Optional[str] = None
+    user_id: str
+    name: str = Field(..., description="The name of the chatbot")
+    description: Optional[str] = Field(None, description="Description of the chatbot")
+    is_public: bool = Field(True, description="Whether the chatbot is publicly accessible")
+    configuration: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Configuration options for the chatbot")
+    public_url_slug: Optional[str] = Field(None, description="URL slug for public access")
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class VisitorModel(BaseModel):
+    """
+    Model for a visitor
+    """
+    id: Optional[str] = None
+    visitor_id: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
 
 
 class AdminLoginRequest(BaseModel):
@@ -140,26 +141,4 @@ class ErrorResponse(BaseModel):
     Standard error response
     """
     error: str
-    detail: Optional[str] = None
-
-
-class Chatbot(BaseModel):
-    """
-    Model for a chatbot
-    """
-    id: Optional[str] = None
-    user_id: str = Field(..., description="User ID that owns this chatbot")
-    name: str = Field(..., description="Chatbot name")
-    description: Optional[str] = Field(None, description="Chatbot description")
-    is_public: bool = Field(False, description="Whether the chatbot is publicly accessible")
-    configuration: Dict[str, Any] = Field(default_factory=dict, description="Chatbot configuration settings")
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class ChatbotListResponse(BaseModel):
-    """
-    Response model for listing chatbots
-    """
-    chatbots: List[Chatbot] = Field(default_factory=list)
-    count: int = Field(0, description="Total number of chatbots") 
+    detail: Optional[str] = None 

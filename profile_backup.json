@@ -1,102 +1,13 @@
 {
-  "bio": null,
-  "skills": null,
-  "experience": "This field should persist",
-  "projects": null,
-  "interests": null,
-  "project_list": [
-    {
-      "id": "13613c49-7dec-469e-90ac-56ea284693f8",
-      "title": "Test",
-      "description": "Nothing",
-      "category": "tech",
-      "details": "Nothing",
-      "content": "Cars24 AU aimed to improve user engagement and lead generation by redesigning the onboarding process of their app. The goal was to build user trust and ensure higher conversion rates through a login-first approach.\n\nProblem Statement\nThe initial onboarding flow allowed users to explore the app without logging in, leading to high abandonment rates and low lead generation. Users often left without providing any valuable information. Additional challenges included:\n\nCommunicating about the brand and Building Trust: Users were hesitant to provide information without trust signals.\nNew Experience for AU Market: Adapting the onboarding process to meet the expectations and preferences of the Australian market.\nOld flow\n\nIn the initial onboarding process, users could access the app without logging in, which led to high abandonment rates. This approach resulted in limited user engagement with key features, as many functionalities required logging in. Consequently, the lack of early user information capture led to low lead generation. The absence of a mandatory login step hindered the app\u2019s ability to convert visitors into engaged users and collect valuable data for personalized experiences.\n\nResearch and User Understanding\nUser Behavior Analysis: Evaluated user interactions with the old onboarding process to understand drop-off points and engagement levels.\n\nFeedback Collection: Gathered insights from user feedback to identify pain points and areas needing improvement.\n\nCompetitor Analysis: Studied onboarding flows of similar apps to identify best practices and strategies that could be implemented in the Cars24 app.\n\n\nDuring the ideation phase , several key elements were considered to address the identified problems:\n\nTrust and Fast Content Consumption:\nThe onboarding flow was designed to quickly convey trust and provide essential information, ensuring users feel secure and informed from the start.\n\n2. Lead Generation and Process Clarity:\n\nEmphasising the importance of user data capture early in the process while maintaining clear and straightforward steps for the users.\n\nThe flow diagrams show distinct paths for new users, returning non-logged-in users, and returning logged-in users, each tailored to provide the most efficient and engaging onboarding experience. The new user flow includes a splash screen, followed by a trust and education step before prompting for login. Returning users bypass the trust step, streamlining their experience.\n\n\nContent Planning\nTo structure the onboarding content effectively, the following elements were prioritised, as shown\n\n\nWhat is Cars24?\n\nFuture of used car buying and selling.\nRedefining how Australians buy and sell cars.\nValue Propositions/Trust\n\n7-day return with a 100% money-back guarantee.\nQuality guarantee with comprehensive inspections by expert technicians.\n3-month warranty and roadside assistance complementary.\nProcess Clarity\n\n800+ cars to choose from the comfort of your home.\n100% online process.\n2-minute finance pre-approval & trade-in with competitive rates.\nRatings and Reviews\nOver 4000 happy customers.\nRatings from Google, Trustpilot, and Product Review.\nContent Creation\nTo deliver a compelling story and enhance user experience, old footages from Cars24 AU marketing were repurposed. Using storytelling and content creation skills, the existing footage was edited and reworked to create shorter, impactful content. This new content succinctly communicated the desired message, building trust and engaging users effectively.\n\nFinal design and Flow\n\nFinal flow video\n\nConclusion\nThere has been a massive increase in app logins which leads to:\n\n\nLead Generation for CRM purposes.\nBetter overall app experience and potential scope for more personalization.\nAround 52% of the users seeing the login screen initiate a login while the rest skip it.\nDespite a flat to slight decrease in U2BI/U2I and homepage landings, there has been a slight increase in U2Ph. This likely indicates that the new flow filters out low intent users during their first visit.",
-      "created_at": "2025-03-24T16:24:17Z",
-      "updated_at": "2025-03-24T16:39:55Z"
-    },
-    {
-      "id": "7bc9d85b-f3f1-4a58-a560-9e22ec56246e",
-      "title": "Testing ",
-      "description": "adadad",
-      "category": "design",
-      "details": "adadadad",
-      "content": null,
-      "content_html": null,
-      "created_at": "2025-03-25T16:01:54Z",
-      "updated_at": "2025-03-25T16:01:54Z"
-    },
-    {
-      "title": "Test Project 9531",
-      "description": "This is a test project",
-      "category": "testing",
-      "details": "Detailed information about the test project",
-      "content": "<p>Rich text content</p>",
-      "id": "e404c4ea-978e-49d1-8f05-4fbd6d3eff94",
-      "created_at": "2025-03-26T09:58:02Z",
-      "updated_at": "2025-03-26T09:58:02Z",
-      "user_id": "00000000-0000-4000-a000-000000000001"
-    },
-    {
-      "title": "Test Project Curl",
-      "description": "Test description",
-      "category": "test",
-      "details": "Test details",
-      "content": "<p>Test content</p>",
-      "id": "e6161c66-b083-42e6-ae1c-a8b91c6431b7",
-      "created_at": "2025-03-26T09:58:35Z",
-      "updated_at": "2025-03-26T09:58:35Z",
-      "user_id": "00000000-0000-4000-a000-000000000001"
-    },
-    {
-      "title": "Test Project 7137",
-      "description": "This is a test project",
-      "category": "testing",
-      "details": "Detailed information about the test project",
-      "content": "<p>Rich text content</p>",
-      "id": "47705653-461a-48ca-b7ed-4852b738fea2",
-      "created_at": "2025-03-26T09:59:21Z",
-      "updated_at": "2025-03-26T09:59:21Z",
-      "user_id": "00000000-0000-4000-a000-000000000001"
-    },
-    {
-      "title": "Test Project Direct",
-      "description": "Test description direct",
-      "category": "test-direct",
-      "details": "Test details direct",
-      "content": "<p>Test content direct</p>",
-      "id": "b2eaa135-1a16-4d8f-b844-d2902cb3d9b2",
-      "created_at": "2025-03-26T09:59:27Z",
-      "updated_at": "2025-03-26T09:59:27Z",
-      "user_id": "00000000-0000-4000-a000-000000000001"
-    },
-    {
-      "title": "Test Project 6064",
-      "description": "This is a test project",
-      "category": "testing",
-      "details": "Detailed information about the test project",
-      "content": "<p>Rich text content</p>",
-      "id": "918d2b61-d42f-49ab-9643-fa2369924bcc",
-      "created_at": "2025-03-26T10:00:15Z",
-      "updated_at": "2025-03-26T10:00:15Z",
-      "user_id": "00000000-0000-4000-a000-000000000001"
-    },
-    {
-      "title": "Test Project 3018",
-      "description": "This is a test project",
-      "category": "testing",
-      "details": "Detailed information about the test project",
-      "content": "<p>Rich text content</p>",
-      "id": "df36bc13-9de2-46f6-8458-8fe5a77cae30",
-      "created_at": "2025-03-26T10:01:41Z",
-      "updated_at": "2025-03-26T10:01:41Z",
-      "user_id": "00000000-0000-4000-a000-000000000001"
-    }
-  ],
-  "name": "New User",
-  "location": "Worldwide",
-  "id": "754093fa-dca3-4ec8-892c-b278e3207dc1",
-  "created_at": "2025-03-24T10:58:31.626237+00:00",
-  "updated_at": "2025-03-26T10:19:15Z",
-  "user_id": "754093fa-dca3-4ec8-892c-b278e3207dc1"
+  "name": "Ciril",
+  "bio": "I am a software engineer with a passion for building AI and web applications. I specialize in full-stack development and have experience across the entire development lifecycle.",
+  "skills": "JavaScript, TypeScript, React, Node.js, Python, FastAPI, PostgreSQL, ChromaDB, Supabase, Next.js, TailwindCSS",
+  "experience": "5+ years of experience in full-stack development, with a focus on building AI-powered applications and responsive web interfaces.",
+  "interests": "AI, machine learning, web development, reading sci-fi, hiking",
+  "project_list": [],
+  "updated_at": "2025-04-26T17:44:22Z",
+  "location": "San Francisco, CA",
+  "calendly_link": "",
+  "meeting_rules": "",
+  "created_at": "2025-04-26T17:44:22Z"
 }

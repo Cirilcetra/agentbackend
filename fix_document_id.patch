@@ -1,0 +1,12 @@
+--- reindex_vector_db.py.orig	2025-03-29 22:45:00
++++ reindex_vector_db.py	2025-03-29 22:45:00
+@@ -132,8 +132,7 @@
+                 
+                 # Format document data for vector DB
+                 document_data = {
+-                    "id": doc
+-                    "title": doc.get("title"),
++                    "id": doc.get("id"), "title": doc.get("title"),
+                     "description": doc.get("description"),
+                     "file_name": doc.get("file_name"),
+                     "extracted_text": doc.get("extracted_text"),

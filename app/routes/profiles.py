@@ -1,51 +1,34 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from typing import Optional, List
 from datetime import datetime
-import logging
 
 from app import models
-from app.database import get_profile_data, update_profile_data, add_project, update_project, delete_project
+from app.database import get_profile_data, update_profile_data
 from app.embeddings import add_profile_to_vector_db
-from app.routes.auth import get_current_user, User, get_optional_user
+from app.routes.admin import verify_admin_token
 
 router = APIRouter()
 
 @router.get("/", response_model=models.ProfileData)
-async def get_profile(
-    user_id: Optional[str] = Query(None, description="Specific user profile to retrieve"),
-    current_user: Optional[User] = Depends(get_optional_user)
-):
+async def get_profile(user_id: Optional[str] = Query(None, description="Specific user profile to retrieve")):
     """
-    Get the profile data for a specific user
+    Get the profile data
     If user_id is provided, get that specific user's profile
-    Otherwise, get the current authenticated user's profile
+    Otherwise, return the default profile
     """
     try:
-        # Use current user's ID if no user_id provided and a user is authenticated
-        target_user_id = user_id
-        if not target_user_id and current_user:
-            target_user_id = current_user.id
-            
-        if not target_user_id:
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication required to access profile data"
-            )
-            
-        profile_data = get_profile_data(user_id=target_user_id)
+        profile_data = get_profile_data(user_id=user_id)
         if not profile_data:
             # Return a default profile if none exists
             return models.ProfileData(
                 bio="No bio available yet.",
                 skills="No skills listed yet.",
                 experience="No experience listed yet.",
-                interests="No interests listed yet.",
-                user_id=target_user_id
+                projects="No projects listed yet.",
+                interests="No interests listed yet."
             )
         return models.ProfileData(**profile_data)
     
-    except HTTPException:
-        raise
     except Exception as e:
         print(f"Error getting profile data: {e}")
         raise HTTPException(
@@ -53,10 +36,10 @@ async def get_profile(
             detail=f"Failed to get profile data: {str(e)}"
         )
 
-@router.put("/", response_model=dict)
+@router.put("/", response_model=models.ProfileData)
 async def update_profile(
     profile_data: models.ProfileData, 
-    current_user: User = Depends(get_current_user),
+    user = Depends(verify_admin_token),
 ):
     """
     Update the profile data for the authenticated user
@@ -65,189 +48,148 @@ async def update_profile(
         # Convert to dict for database
         data_dict = profile_data.dict()
         
-        # Log the exact data we're receiving from the frontend
-        logging.info(f"Received profile update from frontend: {data_dict}")
-        
-        # Override user_id with the authenticated user's ID
-        data_dict["user_id"] = current_user.id
-        
         # Add/update timestamp for updating
         data_dict["updated_at"] = datetime.utcnow().isoformat()
         
-        # Remove id field if present to avoid SQL conflicts
-        if "id" in data_dict:
-            logging.info(f"Removing id field from profile update data")
-            data_dict.pop("id")
-        
-        # Check if any fields are empty strings and convert to None
-        # This helps avoid overwriting with empty strings
-        for key, value in list(data_dict.items()):
-            if isinstance(value, str) and value.strip() == '':
-                logging.info(f"Converting empty string to None for field: {key}")
-                data_dict[key] = None
-        
         # Update in database with the authenticated user's ID
-        logging.info(f"Updating profile for user {current_user.id}")
-        logging.debug(f"Profile update data: {data_dict}")
+        print(f"Updating profile for user {user.id} with data: {data_dict}")
+        updated_data = update_profile_data(data_dict, user_id=user.id)
         
-        result = update_profile_data(data_dict, user_id=current_user.id)
-        
-        if not result or not result.get("success", False):
-            error_message = result.get("message", "Unknown error updating profile") if result else "Failed to update profile"
-            logging.error(f"Profile update failed: {error_message}")
-            return {
-                "success": False,
-                "message": error_message,
-                "profile": get_profile_data(current_user.id)
-            }
-        
-        # Add to vector database for search
-        updated_profile = result.get("profile", {})
-        try:
-            vector_update_success = add_profile_to_vector_db(updated_profile, user_id=current_user.id)
-            if not vector_update_success:
-                logging.warning("Failed to update vector database")
-        except Exception as vector_error:
-            logging.error(f"Error updating vector database: {vector_error}")
-        
-        # Get the latest profile data to ensure we have the most up-to-date information
-        latest_profile = get_profile_data(current_user.id)
-        
-        return {
-            "success": True,
-            "message": result.get("message", "Profile updated successfully"),
-            "profile": latest_profile
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error updating profile data: {e}", exc_info=True)
-        return {
-            "success": False,
-            "message": f"Error updating profile: {str(e)}", 
-            "profile": get_profile_data(current_user.id)
-        }
-
-@router.post("/projects", response_model=dict)
-async def create_project(
-    project: models.Project,
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Add a new project to the profile
-    """
-    try:
-        # Convert to dict for database
-        project_dict = project.dict()
-        
-        # Add project to database
-        logging.info(f"Adding project for user {current_user.id}")
-        result = add_project(project_dict, user_id=current_user.id)
-        
-        if not result or not result.get("success", False):
-            error_message = result.get("message", "Unknown error adding project") if result else "Failed to add project"
-            logging.error(f"Project creation failed: {error_message}")
-            return {
-                "success": False,
-                "message": error_message,
-                "profile": get_profile_data(current_user.id)
-            }
-        
-        # Add to vector database for search
-        updated_profile = result.get("profile", {})
-        try:
-            vector_update_success = add_profile_to_vector_db(updated_profile, user_id=current_user.id)
-            if not vector_update_success:
-                logging.warning("Failed to update vector database with new project")
-        except Exception as vector_error:
-            logging.error(f"Error updating vector database: {vector_error}")
-        
-        return {
-            "success": True,
-            "message": result.get("message", "Project added successfully"),
-            "profile": updated_profile
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error adding project: {e}", exc_info=True)
-        return {
-            "success": False,
-            "message": f"Error adding project: {str(e)}",
-            "profile": get_profile_data(current_user.id)
-        }
-
-@router.put("/projects/{project_id}", response_model=models.ProfileData)
-async def edit_project(
-    project_id: str,
-    project: models.Project,
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Update an existing project
-    """
-    try:
-        # Convert to dict for database
-        project_dict = project.dict()
-        
-        # Update project in database
-        updated_profile = update_project(project_id, project_dict, user_id=current_user.id)
-        if not updated_profile:
+        # Check if the database update failed
+        if updated_data is None:
+            print(f"Database update failed for user {user.id}") # Use print or logger
             raise HTTPException(
-                status_code=404,
-                detail="Project not found"
+                status_code=500,
+                # Provide a more specific error message if possible, 
+                # otherwise a general one. The detailed error is logged in update_profile_data.
+                detail="Failed to update profile data in the database. Check backend logs for details."
             )
         
-        # Update vector database
-        vector_update_success = add_profile_to_vector_db(updated_profile, user_id=current_user.id)
-        if not vector_update_success:
-            print("Warning: Failed to update vector database with updated project")
+        # If update succeeded, proceed to update vector DB
+        print(f"Database update successful for user {user.id}, proceeding with vector DB update")
         
-        return models.ProfileData(**updated_profile)
+        # Add to vector database for search
+        vector_update_success = add_profile_to_vector_db(data_dict, user_id=user.id)
+        if not vector_update_success:
+            print("Warning: Failed to update vector database")
+        
+        return models.ProfileData(**updated_data)
     
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error updating project: {e}")
+        print(f"Error updating profile data: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to update project: {str(e)}"
+            detail=f"Failed to update profile data: {str(e)}"
         )
 
-@router.delete("/projects/{project_id}", response_model=dict)
-async def remove_project(
-    project_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Delete a project
-    """
-    try:
-        # Delete project from database
-        success = delete_project(project_id, user_id=current_user.id)
-        if not success:
-            raise HTTPException(
-                status_code=404,
-                detail="Project not found"
-            )
+# Remove project-related endpoints
+# @router.post("/projects", response_model=models.ProfileData)
+# async def create_project(
+#     project: models.Project,
+#     user = Depends(verify_admin_token),
+# ):
+#     """
+#     Add a new project to the profile
+#     """
+#     try:
+#         # Convert to dict for database
+#         project_dict = project.dict()
         
-        # Get updated profile data
-        profile_data = get_profile_data(user_id=current_user.id)
+#         # Add project to database
+#         updated_profile = add_project(project_dict, user_id=user.id)
+#         if not updated_profile:
+#             raise HTTPException(
+#                 status_code=500,
+#                 detail="Failed to add project to profile"
+#             )
         
-        # Update vector database
-        vector_update_success = add_profile_to_vector_db(profile_data, user_id=current_user.id)
-        if not vector_update_success:
-            print("Warning: Failed to update vector database after project deletion")
+#         # Update vector database
+#         vector_update_success = add_profile_to_vector_db(updated_profile, user_id=user.id)
+#         if not vector_update_success:
+#             print("Warning: Failed to update vector database with new project")
         
-        return {"success": True, "message": "Project deleted successfully"}
+#         return models.ProfileData(**updated_profile)
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error deleting project: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete project: {str(e)}"
-        ) 
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"Error adding project: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Failed to add project: {str(e)}"
+#         )
+
+# @router.put("/projects/{project_id}", response_model=models.ProfileData)
+# async def edit_project(
+#     project_id: str,
+#     project: models.Project,
+#     user = Depends(verify_admin_token),
+# ):
+#     """
+#     Update an existing project
+#     """
+#     try:
+#         # Convert to dict for database
+#         project_dict = project.dict()
+        
+#         # Update project in database
+#         updated_profile = update_project(project_id, project_dict, user_id=user.id)
+#         if not updated_profile:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="Project not found"
+#             )
+        
+#         # Update vector database
+#         vector_update_success = add_profile_to_vector_db(updated_profile, user_id=user.id)
+#         if not vector_update_success:
+#             print("Warning: Failed to update vector database with updated project")
+        
+#         return models.ProfileData(**updated_profile)
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"Error updating project: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Failed to update project: {str(e)}"
+#         )
+
+# @router.delete("/projects/{project_id}", response_model=dict)
+# async def remove_project(
+#     project_id: str,
+#     user = Depends(verify_admin_token),
+# ):
+#     """
+#     Delete a project
+#     """
+#     try:
+#         # Delete project from database
+#         success = delete_project(project_id, user_id=user.id)
+#         if not success:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="Project not found"
+#             )
+        
+#         # Get updated profile data
+#         profile_data = get_profile_data(user_id=user.id)
+        
+#         # Update vector database
+#         vector_update_success = add_profile_to_vector_db(profile_data, user_id=user.id)
+#         if not vector_update_success:
+#             print("Warning: Failed to update vector database after project deletion")
+        
+#         return {"success": True, "message": "Project deleted successfully"}
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"Error deleting project: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Failed to delete project: {str(e)}"
+#         ) 
