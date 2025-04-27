@@ -120,7 +120,8 @@ app.add_middleware(AuthMiddleware)
 # Add CORS middleware
 allowed_origins = [
     "http://localhost:3000",                                           # Local development
-    "https://agentclone-9gfdyhwxp-cirils-projects-86482382.vercel.app", # Previous Vercel deployment
+    "https://agentclone-bo5zjmw3l-cirils-projects-86482382.vercel.app", # Previous Vercel deployment
+    "https://agentclone.vercel.app", # Previous Vercel deployment
     "https://agentclone-4b16fnadp-cirils-projects-86482382.vercel.app", # New Vercel deployment
     "https://agentclone-k74ekjy3m-cirils-projects-86482382.vercel.app"  # Additional Vercel deployment
 ]
