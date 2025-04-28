@@ -511,32 +511,6 @@ async def history(chatbot_id: str, visitor_id: str, limit: int = 50):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal Server Error retrieving history: {str(e)}")
 
-# Add a direct route for public chatbot access by user ID
-@app.get("/chat/{user_id}/public")
-async def get_public_chatbot_by_user_id(user_id: str):
-    """
-    Public endpoint to get or create a chatbot for a user
-    This is accessible without authentication
-    """
-    try:
-        # Get or create a chatbot for the user
-        chatbot = get_or_create_chatbot(user_id=user_id)
-        
-        if not chatbot:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No chatbot found for user {user_id}"
-            )
-        
-        # Return the chatbot data
-        return chatbot
-    except Exception as e:
-        logging.error(f"Error getting public chatbot by user ID: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get chatbot: {str(e)}"
-        )
-
 # Add a POST endpoint for public chatbot access by user ID
 @app.post("/chat/{user_id}/public", response_model=ChatResponse)
 async def public_chat(user_id: str, chat_request: ChatRequest):

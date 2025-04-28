@@ -3,13 +3,14 @@ import logging
 import traceback
 import uuid
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Request, Header, Cookie
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, Header, Cookie, status
 from typing import List, Optional
 
 from app import models
 from app.database import (
     log_chat_message, get_chat_history, get_profile_data, 
-    get_or_create_chatbot, supabase, get_or_create_conversation, get_or_create_visitor
+    get_or_create_chatbot, supabase, get_or_create_conversation, get_or_create_visitor,
+    get_user_chatbots, update_chatbot_config
 )
 from app.embeddings import query_vector_db, generate_ai_response, add_conversation_to_vector_db
 from app.auth import get_current_user, User
@@ -60,6 +61,7 @@ async def chat(request: models.ChatRequest):
         if not chatbot:
             raise HTTPException(status_code=404, detail=f"Chatbot not found: {chatbot_id}")
         owner_user_id = chatbot.get("user_id")
+        chatbot_config = chatbot.get("configuration", {})
         logger.info(f"Using provided chatbot_id {chatbot_id} owned by user {owner_user_id}")
         
         if not owner_user_id:
@@ -128,7 +130,8 @@ async def chat(request: models.ChatRequest):
             message=message,
             search_results=search_results,
             profile_data=profile_data,
-            chat_history=chat_history
+            chat_history=chat_history,
+            chatbot_config=chatbot_config
         )
         
         if not ai_response or ai_response.strip() == "":
@@ -325,19 +328,66 @@ async def get_chatbots(current_user: User = Depends(get_current_user)):
     Get all chatbots for the authenticated user
     """
     try:
-        # Query all chatbots for the current user
         if not current_user:
             raise HTTPException(status_code=401, detail="Authentication required")
-        
-        # This will be implemented in the database.py file
-        # For now, stub implementation
-        chatbots = []
+
+        logger.info(f"Fetching chatbots for authenticated user: {current_user.id}")
+        chatbots = get_user_chatbots(user_id=current_user.id)
+
+        if chatbots is None: # Check if function returned None due to error
+            logger.error(f"Database function get_user_chatbots returned None for user {current_user.id}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve chatbots from database.")
+
+        # Convert the list of dicts to a list of ChatbotModel instances
+        # The response_model=List[models.ChatbotModel] handles the validation
         return chatbots
+
     except Exception as e:
         logger.error(f"Error getting chatbots: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get chatbots: {str(e)}"
+        )
+
+@router.put("/chatbots/{chatbot_id}", response_model=models.ChatbotModel)
+async def update_chatbot(
+    chatbot_id: str,
+    update_data: models.ChatbotUpdateRequest, # Use the new model
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update a chatbot's configuration (e.g., tone, personality).
+    Requires authentication.
+    """
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Assuming update_data.configuration holds the settings dictionary
+    if update_data.configuration is None:
+         raise HTTPException(status_code=400, detail="Configuration data is required for update.")
+
+    try:
+        logger.info(f"Attempting to update chatbot {chatbot_id} for user {current_user.id}")
+
+        updated_chatbot = update_chatbot_config(
+            chatbot_id=chatbot_id,
+            configuration=update_data.configuration,
+            user_id=current_user.id
+        )
+
+        if updated_chatbot:
+            return updated_chatbot
+        else:
+            # Check if chatbot exists but belongs to another user or if update failed
+            # You might want more specific error handling based on update_chatbot_config return
+            raise HTTPException(status_code=404, detail=f"Chatbot not found or update failed for ID: {chatbot_id}")
+
+    except Exception as e:
+        logger.error(f"Error updating chatbot {chatbot_id}: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update chatbot: {str(e)}"
         )
 
 @router.get("/chat/{user_id}/public", response_model=models.ChatbotModel)
@@ -471,7 +521,8 @@ async def chat_with_public_chatbot(user_id: str, request: models.ChatRequest):
             message=message,
             search_results=search_results,
             profile_data=profile_data,
-            chat_history=chat_history
+            chat_history=chat_history,
+            chatbot_config=chatbot.get("configuration", {})
         )
         
         # Brief validation of the response
@@ -516,74 +567,18 @@ async def chat_with_public_chatbot(user_id: str, request: models.ChatRequest):
         )
     
     except Exception as e:
+        # Ensure logger is available in this scope
+        import logging
+        import traceback
+        # logger = logging.getLogger(__name__) # <-- REMOVE THIS LINE. Use module-level logger.
+
         logger.error(f"Error in public chat route: {str(e)}")
-        try:
-            # Check if conversation_id exists, if not try to create it
-            if 'conversation_id' not in locals() and 'db_visitor_id' in locals() and 'chatbot' in locals():
-                try:
-                    conversation_id = get_or_create_conversation(
-                        chatbot_id=str(chatbot["id"]),
-                        visitor_id=str(db_visitor_id)
-                    )
-                    logger.info(f"Created conversation ID for fallback: {conversation_id}")
-                except Exception as conv_err:
-                    logger.error(f"Could not create conversation for fallback: {conv_err}")
-                    # Continue without conversation_id, will handle below
-            
-            # Generate a basic response without vector DB if possible
-            if 'profile_data' in locals() and profile_data:
-                try:
-                    ai_response = await generate_ai_response(
-                        message=request.message,
-                        search_results={"documents": [], "metadatas": [], "distances": []},
-                        profile_data=profile_data,
-                        chat_history=[]
-                    )
-                    logger.info("Generated fallback AI response after error")
-                    
-                    # Save the fallback response to the database if conversation_id exists
-                    if 'conversation_id' in locals() and conversation_id:
-                        fallback_log_result = log_chat_message(
-                            conversation_id=conversation_id,
-                            message=request.message,
-                            sender="user",
-                            response=ai_response
-                        )
-
-                        # Add to vector DB if possible, handling new return type
-                        try:
-                            fallback_message_id = None
-                            if fallback_log_result and isinstance(fallback_log_result, list) and len(fallback_log_result) > 0 and isinstance(fallback_log_result[0], dict):
-                                fallback_message_id = fallback_log_result[0].get("id")
-
-                            if fallback_message_id:
-                                add_conversation_to_vector_db(
-                                    message=request.message,
-                                    response=ai_response,
-                                    visitor_id=visitor_id,
-                                    message_id=fallback_message_id,
-                                    user_id=owner_user_id
-                                )
-                            else:
-                                logger.warning("Could not add fallback conversation to vector DB: Failed to get message_id.")
-                        except Exception as vector_error:
-                            logger.error(f"Error adding fallback response to vector DB: {str(vector_error)}")
-                    else:
-                        logger.warning("Could not log fallback message - no conversation_id available")
-                    
-                    return models.ChatResponse(
-                        response=ai_response,
-                        query_time_ms=query_time_ms # Use the time calculated before fallback
-                    )
-                except Exception as ai_error:
-                    logger.error(f"Error generating fallback AI response: {str(ai_error)}")
-        except Exception as fallback_error:
-            logger.error(f"Error in fallback response: {str(fallback_error)}")
+        logger.error(traceback.format_exc()) # Log the full traceback
         
-        # Return a generic error message as a last resort
-        return models.ChatResponse(
-            response="I'm sorry, I encountered an error processing your request. Please try again.",
-            query_time_ms=0
+        # Raise HTTPException to return a proper 500 error
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error processing chat: {str(e)}"
         )
 
 @router.get("/chat/{user_id}/public/history", response_model=models.ChatHistoryResponse)

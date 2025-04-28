@@ -305,6 +305,68 @@ def update_profile_data(data, user_id=None):
         logger.error(f"Error trace: {traceback.format_exc()}")
         return None
 
+def get_user_chatbots(user_id: str) -> List[Dict]:
+    """Get all chatbots associated with a specific user ID."""
+    if not supabase or not user_id:
+        logger.warning(f"Cannot get chatbots - Supabase not connected or no user_id: {user_id}")
+        return []
+    try:
+        logger.info(f"Fetching chatbots for user_id: {user_id}")
+        response = supabase.table("chatbots").select("*").eq("user_id", user_id).execute()
+
+        if response.data:
+            logger.info(f"Found {len(response.data)} chatbots for user {user_id}")
+            # Ensure configuration is a dict, default to empty if null/invalid
+            for bot in response.data:
+                if not isinstance(bot.get('configuration'), dict):
+                    bot['configuration'] = {}
+            return response.data
+        else:
+            logger.info(f"No chatbots found for user {user_id}")
+            return []
+
+    except Exception as e:
+        logger.error(f"Error fetching chatbots for user {user_id}: {e}")
+        logger.error(traceback.format_exc())
+        return []
+
+def update_chatbot_config(chatbot_id: str, configuration: Dict, user_id: str) -> Optional[Dict]:
+    """Update the configuration for a specific chatbot ID, ensuring the user owns it."""
+    if not supabase:
+        logger.error("Cannot update chatbot config - Supabase not connected.")
+        return None
+
+    try:
+        logger.info(f"Updating configuration for chatbot_id: {chatbot_id} by user_id: {user_id}")
+        # Update the specific chatbot owned by the user
+        response = supabase.table("chatbots") \
+            .update({
+                "configuration": configuration,
+                "updated_at": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            }) \
+            .eq("id", chatbot_id) \
+            .eq("user_id", user_id) \
+            .execute()
+
+        if response.data:
+            logger.info(f"Successfully updated config for chatbot {chatbot_id}: {response.data[0]}")
+            updated_bot = response.data[0]
+            # Ensure configuration is dict
+            if not isinstance(updated_bot.get('configuration'), dict):
+                 updated_bot['configuration'] = {}
+            return updated_bot
+        elif len(response.data) == 0:
+             logger.warning(f"No chatbot found with id {chatbot_id} owned by user {user_id} to update.")
+             return None # Or raise 404?
+        else:
+            logger.error(f"Error updating chatbot config for {chatbot_id}: {response}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Exception updating chatbot config for {chatbot_id}: {e}")
+        logger.error(traceback.format_exc())
+        return None
+
 def get_or_create_chatbot(user_id=None, chatbot_id=None, slug=None):
     """
     Get an existing chatbot or create a default one

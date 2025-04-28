@@ -9,6 +9,9 @@ import logging
 import traceback
 from typing import List, Dict
 
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 load_dotenv()
 
@@ -517,21 +520,23 @@ def format_conversation_history(chat_history: List[dict]) -> str:
     
     return "\n".join(formatted)
 
-async def generate_ai_response(message: str, search_results: dict, profile_data: dict, chat_history: List[dict], target_user_id: str = None) -> str:
+async def generate_ai_response(message: str, search_results: dict, profile_data: dict, chat_history: List[dict], target_user_id: str = None, chatbot_config: dict = None) -> str:
     try:
+        # Track if we have document content
+        has_document_content = False
+
+        # Define the context sections dictionary HERE
         context_sections = {
             "profile": [],
             "project": [],
             "document": [],
             "conversation": [],
-            "note": [] # Add note section
+            "note": []
         }
-        has_document_content = False
 
-        # Process search_results (corrected loop)
+        # Correctly process the nested search results structure
         if search_results and search_results.get("documents") and search_results.get("metadatas") and \
-           search_results.get("documents")[0] is not None and search_results.get("metadatas")[0] is not None: # Added check for inner lists not being None
-
+           search_results.get("documents")[0] is not None and search_results.get("metadatas")[0] is not None:
             docs_list = search_results["documents"][0]
             meta_list = search_results["metadatas"][0]
 
@@ -554,28 +559,23 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
                         else:
                             context_entry = f"Document Info ({subcategory}): {doc}"
                     elif category == "note":
-                        # Format note, remove prefix added during embedding
                         note_content = doc
                         if isinstance(doc, str) and doc.startswith("User Note: "):
-                             note_content = doc[len("User Note: ")]
-                        context_entry = note_content # Just the note content
+                             note_content = doc[len("User Note: "):].strip()
+                        context_entry = note_content
                     elif category == "conversation":
-                         # Format conversation if needed
-                         context_entry = doc # Or apply specific formatting
+                         context_entry = doc
                     elif category == "profile":
                         context_entry = f"{subcategory.capitalize()}: {doc}"
 
-                    # Add to appropriate section
                     if category in context_sections:
                         context_sections[category].append(context_entry)
                     else:
                         logger.warning(f"Unknown category '{category}' in search results, adding to profile section.")
-                        context_sections["profile"].append(context_entry) # Fallback
+                        context_sections["profile"].append(context_entry)
 
-                # Log content counts
                 for section, entries in context_sections.items():
                     logger.info(f"Collected {len(entries)} entries for section: {section}")
-
             else:
                 logger.info("Search results structure invalid or empty inner lists.")
         else:
@@ -583,7 +583,7 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
 
         # Limit entries per section
         max_entries = {
-            "document": 5, "project": 3, "profile": 3, "conversation": 2, "note": 5 # Include note limit
+            "document": 5, "project": 3, "profile": 3, "conversation": 2, "note": 5
         }
         for section, entries in context_sections.items():
             limit = max_entries.get(section, 3)
@@ -593,10 +593,9 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
 
         # Build context_text for the prompt
         context_text = ""
-        # Order: Docs, Notes, Projects, Conversations, Profile? Adjust as needed.
         if context_sections["document"]:
             context_text += "\nKnowledge Base Information:\n" + "\n".join([f"- {entry}" for entry in context_sections["document"]]) + "\n"
-        if context_sections["note"]: # ADD Notes section
+        if context_sections["note"]:
             context_text += "\nRelevant Notes:\n" + "\n".join([f"- {entry}" for entry in context_sections["note"]]) + "\n"
         if context_sections["project"]:
              context_text += "\nProject Information:\n" + "\n".join([f"- {entry}" for entry in context_sections["project"]]) + "\n"
@@ -610,7 +609,7 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         else:
             context_text = "\nAdditional Context:\n" + context_text
 
-        # Build the system prompt with the refined instruction #4
+        # Get core profile details
         name = profile_data.get('name', 'AI Assistant')
         bio = profile_data.get('bio', 'I am an AI assistant.')
         skills = profile_data.get('skills', 'No specific skills listed.')
@@ -620,50 +619,88 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         calendly_link = profile_data.get('calendly_link')
         meeting_rules = profile_data.get('meeting_rules')
 
+        # --- Incorporate Chatbot Configuration --- #
+        personality_instructions = ""
+        tone_instructions = ""
+        style_instructions = ""
+
+        if chatbot_config:
+            tone = chatbot_config.get('tone', 'Friendly')
+            personality = chatbot_config.get('personality', 'Helpful')
+            style = chatbot_config.get('communicationStyle', 'Detailed')
+
+            logger.info(f"Using chatbot config: Tone={tone}, Personality={personality}, Style={style}")
+
+            # Simple examples, these can be more complex
+            if tone == 'Friendly':
+                tone_instructions = "Maintain a friendly and approachable tone."
+            elif tone == 'Professional':
+                tone_instructions = "Maintain a professional and formal tone."
+            else:
+                tone_instructions = f"Adopt a {tone} tone."
+
+            if personality == 'Curious':
+                personality_instructions = "Show curiosity and ask clarifying questions."
+            else:
+                personality_instructions = f"Exhibit a {personality} personality."
+
+            if style == 'Short and punchy':
+                style_instructions = "Keep responses concise and to the point."
+            else:
+                style_instructions = f"Use a {style} communication style."
+        # --- End Chatbot Configuration --- #
+
+
         doc_instructions = ("If the user asks about specific documents, projects, or technical details that might be in the knowledge base, summarize the relevant info found under 'Knowledge Base Information'." if has_document_content
                            else "You currently don't have access to detailed documents.")
 
-        system_prompt = f"""You are {name}'s personal AI clone, designed to mimic their personality, knowledge, and communication style based *only* on the information provided below.
+        # --- System Prompt Construction ---
+        system_prompt = f"""
+        You are an AI assistant representing {name}.
+        Your goal is to answer questions based *primarily* on the provided CONTEXT (Profile Info, Knowledge Base, Notes) and CONVERSATION HISTORY.
+        You can synthesize information from these sources. If the context mentions relevant experience or work that sounds like a project, describe it when asked about projects.
+        Do not make up information or answer questions outside of this scope.
 
-Core Profile Information:
-- Name: {name}
-- Location: {location}
-- Bio: {bio}
-- Skills: {skills}
-- Experience: {experience}
-- Interests: {interests}
-{context_text}
-Meeting Scheduling:
-- My Calendly Link: {calendly_link or 'Not available'}
-- Rules for Meetings: {meeting_rules or 'Please ask me about setting up a meeting.'}
+        --- Personality and Style Guidelines ---
+        {tone_instructions} {personality_instructions} {style_instructions}
+        Speak in the first person as if you are {name}. Always maintain this persona.
 
-Important Instructions:
-1. ALWAYS respond as {name}, using the first person ("I", "me", "my"). Never reveal you are an AI or clone.
-2. Use the provided profile information (bio, skills, experience, interests) as your core knowledge.
-3. Keep responses concise, conversational, and aligned with the personality shown in the bio and interests. Avoid corporate jargon unless it's present in the profile.
-4. For questions about topics not explicitly covered in the main 'Core Profile Information' section (e.g., specific details, technical knowledge, opinions recalled in notes or past conversations): Search **all** provided context sections ('Knowledge Base Information', 'Relevant Notes', 'Relevant Previous Conversations', 'Additional Profile Information'). **If you find relevant information in *any* of these sections, use it directly to answer the question.** Synthesize the information naturally as if recalling your own knowledge or past statements. Only if no relevant details are found in *any* context section should you state that you don't have the specific information requested.
-5. If asked to schedule a meeting, provide the Calendly link if available and mention the meeting rules. If no link is available, suggest discussing meeting availability.
-6. If asked about something outside the provided profile, context, or notes, politely state that you don't have that specific information available right now.
-{doc_instructions}
+        Core Profile Information:
+        - Name: {name}
+        - Location: {location}
+        - Bio: {bio}
+        - Skills: {skills}
+        - Experience: {experience}
+        - Interests: {interests}
+        {context_text}
+        Meeting Scheduling:
+        - My Calendly Link: {calendly_link or 'Not available'}
+        - Rules for Meetings: {meeting_rules or 'Please ask me about setting up a meeting.'}
 
-Recent conversation history:
-{format_conversation_history(chat_history)}
-"""
+        Important Instructions:
+        1. ALWAYS respond as {name}, using the first person ("I", "me", "my"). Never reveal you are an AI or clone.
+        2. Use the provided profile information (bio, skills, experience, interests) as your core knowledge.
+        3. Keep responses concise, conversational, and aligned with the personality shown in the bio and interests. Avoid corporate jargon unless it's present in the profile.
+        4. For questions about topics not explicitly covered in the main 'Core Profile Information' section (e.g., specific details, technical knowledge, opinions recalled in notes or past conversations): Search **all** provided context sections ('Knowledge Base Information', 'Relevant Notes', 'Relevant Previous Conversations', 'Additional Profile Information'). **If you find relevant information in *any* of these sections, use it directly to answer the question.** Synthesize the information naturally as if recalling your own knowledge or past statements. Only if no relevant details are found in *any* context section should you state that you don't have the specific information requested.
+        5. If asked to schedule a meeting, provide the Calendly link if available and mention the meeting rules. If no link is available, suggest discussing meeting availability.
+        6. If asked about something outside the provided profile, context, or notes, politely state that you don't have that specific information available right now.
+        {doc_instructions}
+
+        Recent conversation history:
+        {format_conversation_history(chat_history)}
+        """
 
         logger.info(f"System prompt length: {len(system_prompt)} characters")
-        # Log first 500 chars for debugging
         logger.debug(f"System prompt start: {system_prompt[:500]}...")
 
-        # Prepare messages for OpenAI API
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
         ]
 
-        # Make the OpenAI API call
         try:
             response = openai.chat.completions.create(
-                model="gpt-4-turbo-preview", # Or your preferred model
+                model="gpt-4-turbo-preview",
                 messages=messages,
                 max_tokens=400,
                 temperature=0.7,

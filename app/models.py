@@ -70,15 +70,30 @@ class ChatbotModel(BaseModel):
     """
     Model for a chatbot
     """
-    id: Optional[str] = None
-    user_id: str
-    name: str = Field(..., description="The name of the chatbot")
-    description: Optional[str] = Field(None, description="Description of the chatbot")
-    is_public: bool = Field(True, description="Whether the chatbot is publicly accessible")
-    configuration: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Configuration options for the chatbot")
-    public_url_slug: Optional[str] = Field(None, description="URL slug for public access")
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    slug: str
+    description: Optional[str] = None
+    configuration: Optional[Dict[str, Any]] = None
+    is_public: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+        from_attributes = True
+
+
+class ChatbotUpdateRequest(BaseModel):
+    """
+    Request model for updating chatbot configuration.
+    Only includes fields that should be updatable via this endpoint.
+    """
+    configuration: Optional[Dict[str, Any]] = Field(None, description="Configuration options for the chatbot")
+    # Add other fields like name, description if they should be updatable here
+    # name: Optional[str] = None
+    # description: Optional[str] = None
 
 
 class VisitorModel(BaseModel):
@@ -163,3 +178,9 @@ class NoteRead(NoteBase):
     class Config:
         orm_mode = True  # For SQLAlchemy or similar ORMs
         from_attributes = True  # Pydantic v2 equivalent of orm_mode 
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+    # ... rest of file ... 
