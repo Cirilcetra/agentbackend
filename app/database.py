@@ -18,6 +18,21 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# --- Add Logging Here (Near Supabase Init) ---
+logger.info(f"DATABASE INIT: Attempting Supabase connection.")
+logger.info(f"DATABASE INIT: SUPABASE_URL loaded: {bool(SUPABASE_URL)}")
+logger.info(f"DATABASE INIT: SUPABASE_KEY loaded: {bool(SUPABASE_KEY)}")
+if SUPABASE_KEY:
+    key_preview = SUPABASE_KEY[:5] + "..." + SUPABASE_KEY[-5:]
+    logger.info(f"DATABASE INIT: SUPABASE_KEY preview: {key_preview}")
+    if SUPABASE_KEY.startswith("eyJ"):
+        logger.info("DATABASE INIT: Key appears to be a service role key (starts with eyJ).")
+    else:
+        logger.warning("DATABASE INIT: Key does NOT start with eyJ. Might be an anon key?")
+else:
+    logger.error("DATABASE INIT: SUPABASE_KEY is NOT LOADED from environment!")
+# --- End Logging ---
+
 # Default profile data to use if DB is not available
 DEFAULT_PROFILE = {
     "name": "John Doe",
@@ -842,3 +857,110 @@ def get_visitor_id_from_session(session_id: str) -> Optional[str]:
         logger.error(f"Error getting visitor ID from session: {e}")
         logger.error(traceback.format_exc())
         return None 
+
+# --- Notes Functions ---
+
+def get_notes(user_id: uuid.UUID) -> List[Dict]:
+    """Get all notes for a specific user using a privileged SQL function via RPC."""
+    if not supabase:
+        logger.error("Supabase client not initialized. Cannot fetch notes.")
+        return []
+    if not user_id:
+        logger.error("User ID is required to fetch notes.")
+        return []
+
+    try:
+        # Prepare parameters for the RPC call
+        params = {'p_user_id': str(user_id)}
+        logger.info(f"RPC CALL: Attempting to call get_notes_privileged with user_id: {user_id}")
+
+        # --- RPC Call ---
+        try:
+            response = supabase.rpc('get_notes_privileged', params).execute()
+            logger.info(f"RPC CALL RESPONSE (get_notes): {response}") # Log the full response
+
+            if hasattr(response, 'data') and isinstance(response.data, list):
+                logger.info(f"RPC CALL SUCCESS (get_notes): Found {len(response.data)} notes for user {user_id}")
+                return response.data # Return the list of notes
+            else:
+                error_details = getattr(response, 'error', None)
+                status_code = getattr(response, 'status_code', 'N/A')
+                logger.error(f"RPC CALL FAILED (get_notes): Invalid data format or error. Status: {status_code}, Error: {error_details}")
+                return [] # Return empty list on failure/invalid format
+
+        except Exception as rpc_error:
+            logger.error(f"RPC CALL EXCEPTION (get_notes): An error occurred during RPC call.")
+            error_details = {
+                 "message": getattr(rpc_error, 'message', str(rpc_error)),
+                 "code": getattr(rpc_error, 'code', 'N/A'),
+                 "details": getattr(rpc_error, 'details', None)
+            }
+            logger.error(f"Supabase RPC Error Details: {error_details}")
+            logger.error(f"Full Traceback: {traceback.format_exc()}")
+            return [] # Return empty list on exception
+
+    except Exception as e:
+        logger.error(f"PRE-RPC EXCEPTION (get_notes): Error preparing for RPC call for user {user_id}: {e}")
+        logger.error(f"Full Traceback: {traceback.format_exc()}")
+        return []
+
+def create_note(user_id: uuid.UUID, content: str) -> Optional[Dict]:
+    """Create a new note using a privileged SQL function via RPC."""
+    if not supabase:
+        logger.error("ACTION FAILED: Supabase client not initialized. Cannot create note.")
+        return None
+    if not user_id:
+        logger.error("ACTION FAILED: User ID is required to create a note.")
+        return None
+    if not content:
+        logger.error("ACTION FAILED: Note content cannot be empty.")
+        return None
+
+    try:
+        # Prepare parameters for the RPC call
+        params = {
+            'p_user_id': str(user_id),
+            'p_content': content
+        }
+        logger.info(f"RPC CALL: Attempting to call create_note_privileged with params: {params}")
+
+        # --- RPC Call ---
+        try:
+            # Execute the PostgreSQL function
+            response = supabase.rpc('create_note_privileged', params).execute()
+            logger.info(f"RPC CALL RESPONSE (create_note): {response}") # Log the full response
+
+            # Check response structure
+            if hasattr(response, 'data') and response.data and len(response.data) > 0:
+                created_note_data = response.data[0]
+                # Basic check for expected fields based on function return type
+                if created_note_data.get('id') and created_note_data.get('user_id'):
+                    logger.info(f"RPC CALL SUCCESS (create_note): Created note with id: {created_note_data.get('id')}")
+                    return created_note_data
+                else:
+                    logger.error(f"RPC CALL FAILED (create_note): Response data missing expected fields. Data: {created_note_data}")
+                    return None
+            else:
+                error_details = getattr(response, 'error', None)
+                status_code = getattr(response, 'status_code', 'N/A')
+                logger.error(f"RPC CALL FAILED (create_note): No data in response. Status: {status_code}, Error: {error_details}")
+                return None
+
+        except Exception as rpc_error:
+            logger.error(f"RPC CALL EXCEPTION (create_note): An error occurred during RPC call.")
+            error_details = {
+                 "message": getattr(rpc_error, 'message', str(rpc_error)),
+                 "code": getattr(rpc_error, 'code', 'N/A'),
+                 "details": getattr(rpc_error, 'details', None)
+            }
+            logger.error(f"Supabase RPC Error Details: {error_details}")
+            logger.error(f"Full Traceback: {traceback.format_exc()}")
+            raise rpc_error # Re-raise for the router to handle
+
+    except Exception as e:
+        # Catch errors during parameter preparation or other logic
+        logger.error(f"PRE-RPC EXCEPTION (create_note): Error preparing for RPC call for user {user_id}: {e}")
+        logger.error(f"Full Traceback: {traceback.format_exc()}")
+        return None
+
+# --- End Notes Functions --- 

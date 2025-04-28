@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import uuid
 
 
 class ChatRequest(BaseModel):
@@ -141,4 +142,24 @@ class ErrorResponse(BaseModel):
     Standard error response
     """
     error: str
-    detail: Optional[str] = None 
+    detail: Optional[str] = None
+
+
+# Note Models
+class NoteBase(BaseModel):
+    content: str
+
+
+class NoteCreate(NoteBase):
+    pass  # Inherits content from NoteBase
+
+
+class NoteRead(NoteBase):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True  # For SQLAlchemy or similar ORMs
+        from_attributes = True  # Pydantic v2 equivalent of orm_mode 

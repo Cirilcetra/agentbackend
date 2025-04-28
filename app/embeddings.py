@@ -5,7 +5,9 @@ from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
 import uuid
 import time
-from typing import List
+import logging
+import traceback
+from typing import List, Dict
 
 # Load environment variables
 load_dotenv()
@@ -315,287 +317,191 @@ def add_document_to_vector_db(document_data, user_id):
         print(f"Error adding document to vector database: {e}")
         return False
 
+def embed_and_store_notes(user_id: uuid.UUID, notes: List[Dict]):
+    """Embeds notes and stores them in the user's vector DB collection."""
+    if not user_id:
+        logger.error("EMBEDDING ERROR: No user_id provided for embedding notes.")
+        return
+    if not notes:
+        logger.info(f"EMBEDDING INFO: No notes provided for user {user_id} to embed.")
+        return
+
+    try:
+        collection_name = "portfolio_data"
+        # Ensure chroma_client is defined and accessible in this scope
+        collection = chroma_client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=openai_ef # Ensure openai_ef is defined and accessible
+        )
+
+        logger.info(f"EMBEDDING INFO: Processing {len(notes)} notes for user {user_id}...")
+
+        documents = []
+        metadatas = []
+        ids = []
+
+        for note in notes:
+            note_id = note.get('id')
+            content = note.get('content')
+
+            if not note_id or not content:
+                logger.warning(f"EMBEDDING WARNING: Skipping note due to missing ID or content: {note}")
+                continue
+
+            document_text = f"User Note: {content}" # Prefix to distinguish notes
+            documents.append(document_text)
+            metadatas.append({
+                "category": "note", # Specific category
+                "user_id": str(user_id),
+                "note_id": str(note_id)
+            })
+            ids.append(f"note_{user_id}_{note_id}") # Unique ChromaDB ID
+
+        if not documents:
+            logger.info(f"EMBEDDING INFO: No valid notes found to add for user {user_id}.")
+            return
+
+        # Add/update notes in ChromaDB
+        # Note: .add() with existing IDs acts like an upsert in ChromaDB
+        collection.add(
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids
+        )
+        logger.info(f"EMBEDDING SUCCESS: Successfully added/updated {len(documents)} notes in vector DB for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"EMBEDDING ERROR: Failed to embed notes for user {user_id}: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+
 def query_vector_db(query, n_results=8, user_id=None, visitor_id=None, include_conversation=True):
     """
     Query the vector database with the user's question
     If include_conversation is True and visitor_id is provided, will also search conversation history
     """
     try:
-        # Use a single collection for all users
         collection_name = "portfolio_data"
-        print(f"Querying collection: {collection_name} with query: '{query}'")
-        
-        # Get or create the collection
+        # Ensure chroma_client and openai_ef are defined and accessible
         collection = chroma_client.get_or_create_collection(
             name=collection_name,
             embedding_function=openai_ef
         )
-        
+
         # Check if collection is empty
         collection_count = collection.count()
         if collection_count == 0:
-            print(f"Vector database is empty (count: 0), returning empty results")
+            logger.info(f"Vector database is empty (count: 0), returning empty results")
             return {
-                "documents": [],
-                "metadatas": [],
-                "distances": []
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]]
             }
-        
-        print(f"Collection has {collection_count} total documents")
-        
-        # Create combined results structure
+
+        logger.info(f"Collection has {collection_count} total documents")
+
         combined_docs = []
-        combined_meta = []
-        combined_dist = []
-        
-        # Track what types of content we found
-        found_types = {"document": False, "profile": False, "project": False, "conversation": False}
-        
-        # First, try to get document content specifically with higher n_results
+        metadatas = []
+        ids = []
+        distances = []
+
+        # Filter dictionary for common user-specific queries
+        user_filter = {"user_id": {"$eq": str(user_id)}} if user_id else None # Convert UUID to string for ChromaDB
+
+        # Query Documents
         if user_id:
             try:
-                print(f"Searching for document content with user_id: {user_id}")
-                document_filter = {
-                    "$and": [
-                        {"category": {"$eq": "document"}},
-                        {"user_id": {"$eq": user_id}}
-                    ]
-                }
-                
-                # First check if any documents exist
-                doc_count_results = collection.get(
-                    where=document_filter,
-                    limit=1
-                )
-                
-                if len(doc_count_results.get("ids", [])) > 0:
-                    print(f"Found documents for user {user_id}, performing query")
-                    # Set a reasonable n_results value (between 5-10 is good)
-                    doc_n_results = 8
-                    
-                    document_results = collection.query(
-                        query_texts=[query],
-                        n_results=doc_n_results,
-                        where=document_filter
-                    )
-                    
-                    if document_results and len(document_results.get("documents", [[]])[0]) > 0:
-                        document_count = len(document_results["documents"][0])
-                        print(f"Found {document_count} relevant document chunks from query")
-                        found_types["document"] = True
-                        
-                        # Add documents to combined results
-                        for i, doc in enumerate(document_results["documents"][0]):
-                            metadata = document_results["metadatas"][0][i]
-                            dist = document_results["distances"][0][i] if document_results.get("distances") else 1.0
-                            print(f"  Doc #{i+1}: {metadata.get('subcategory')} - {doc[:50]}... (distance: {dist:.4f})")
-                            
-                            # Add to combined results
-                            combined_docs.append(doc)
-                            combined_meta.append(metadata)
-                            combined_dist.append(dist)
-                    else:
-                        print("No relevant document results found for the query")
-                else:
-                    print(f"No documents found for user {user_id}")
-            except Exception as doc_error:
-                print(f"Error searching document content: {str(doc_error)}")
-        
-        # Then, get profile data
+                doc_filter = {"$and": [{"category": {"$eq": "document"}}, user_filter]}
+                doc_results = collection.query(query_texts=[query], n_results=5, where=doc_filter) # Example N
+                if doc_results and doc_results.get('ids') and doc_results['ids'][0]:
+                     combined_docs.extend(doc_results['documents'][0])
+                     metadatas.extend(doc_results['metadatas'][0])
+                     distances.extend(doc_results['distances'][0])
+                     ids.extend(doc_results['ids'][0]) # Track IDs to avoid duplicates
+                logger.info(f"Found {len(doc_results.get('ids', [[]])[0])} document results.")
+            except Exception as e:
+                logger.error(f"Error querying documents: {e}")
+
+        # Query Notes (ADD THIS BLOCK)
         if user_id:
             try:
-                profile_filter = {
-                    "$and": [
-                        {"category": {"$eq": "profile"}},
-                        {"user_id": {"$eq": user_id}}
-                    ]
-                }
-                
-                # Check if any profile data exists
-                profile_count_results = collection.get(
-                    where=profile_filter,
-                    limit=1
-                )
-                
-                if len(profile_count_results.get("ids", [])) > 0:
-                    print(f"Found profile data for user {user_id}, performing query")
-                    
-                    profile_results = collection.query(
-                        query_texts=[query],
-                        n_results=n_results,
-                        where=profile_filter
-                    )
-                    
-                    if profile_results and len(profile_results.get("documents", [[]])[0]) > 0:
-                        profile_count = len(profile_results["documents"][0])
-                        print(f"Found {profile_count} relevant profile entries")
-                        found_types["profile"] = True
-                        
-                        # Add to combined results
-                        for i, doc in enumerate(profile_results["documents"][0]):
-                            combined_docs.append(doc)
-                            combined_meta.append(profile_results["metadatas"][0][i])
-                            combined_dist.append(profile_results["distances"][0][i])
+                note_filter = {"$and": [{"category": {"$eq": "note"}}, user_filter]}
+                note_results = collection.query(query_texts=[query], n_results=5, where=note_filter) # Example N
+                if note_results and note_results.get('ids') and note_results['ids'][0]:
+                    # Avoid adding duplicates already found
+                    for i, note_id in enumerate(note_results['ids'][0]):
+                        if note_id not in ids:
+                            combined_docs.append(note_results['documents'][0][i])
+                            metadatas.append(note_results['metadatas'][0][i])
+                            distances.append(note_results['distances'][0][i])
+                            ids.append(note_id)
+                    logger.info(f"Found {len(note_results.get('ids', [[]])[0])} note results.")
                 else:
-                    print(f"No profile data found for user {user_id}")
-            except Exception as profile_error:
-                print(f"Error searching profile data: {str(profile_error)}")
-        
-        # Get project data
+                     logger.info(f"No relevant notes found for query.")
+
+            except Exception as e:
+                logger.error(f"Error querying notes: {e}")
+
+        # Query Profile
         if user_id:
             try:
-                project_filter = {
-                    "$and": [
-                        {"category": {"$eq": "project"}},
-                        {"user_id": {"$eq": user_id}}
-                    ]
-                }
-                
-                # Check if any project data exists
-                project_count_results = collection.get(
-                    where=project_filter,
-                    limit=1
-                )
-                
-                if len(project_count_results.get("ids", [])) > 0:
-                    print(f"Found project data for user {user_id}, performing query")
-                    
-                    project_results = collection.query(
-                        query_texts=[query],
-                        n_results=n_results,
-                        where=project_filter
-                    )
-                    
-                    if project_results and len(project_results.get("documents", [[]])[0]) > 0:
-                        project_count = len(project_results["documents"][0])
-                        print(f"Found {project_count} relevant project entries")
-                        found_types["project"] = True
-                        
-                        # Add to combined results
-                        for i, doc in enumerate(project_results["documents"][0]):
-                            combined_docs.append(doc)
-                            combined_meta.append(project_results["metadatas"][0][i])
-                            combined_dist.append(project_results["distances"][0][i])
-                else:
-                    print(f"No project data found for user {user_id}")
-            except Exception as project_error:
-                print(f"Error searching project data: {str(project_error)}")
-        
-        # If visitor_id is provided and include_conversation is True,
-        # also search for relevant conversation history
-        if visitor_id and include_conversation:
+                profile_filter = {"$and": [{"category": {"$eq": "profile"}}, user_filter]}
+                profile_results = collection.query(query_texts=[query], n_results=3, where=profile_filter) # Example N
+                if profile_results and profile_results.get('ids') and profile_results['ids'][0]:
+                     # Avoid adding duplicates already found
+                    for i, profile_id in enumerate(profile_results['ids'][0]):
+                        if profile_id not in ids:
+                             combined_docs.append(profile_results['documents'][0][i])
+                             metadatas.append(profile_results['metadatas'][0][i])
+                             distances.append(profile_results['distances'][0][i])
+                             ids.append(profile_id)
+                    logger.info(f"Found {len(profile_results.get('ids', [[]])[0])} profile results.")
+            except Exception as e:
+                logger.error(f"Error querying profile: {e}")
+
+        # Query Conversations (handle visitor_id if needed)
+        if include_conversation and visitor_id:
             try:
-                conversation_filter = {
-                    "$and": [
-                        {"category": {"$eq": "conversation"}},
-                        {"visitor_id": {"$eq": visitor_id}}
-                    ]
-                }
-                
-                # Check if any conversation history exists
-                conv_count_results = collection.get(
-                    where=conversation_filter,
-                    limit=1
-                )
-                
-                if len(conv_count_results.get("ids", [])) > 0:
-                    print(f"Found conversation data for visitor {visitor_id}, performing query")
-                
-                conversation_results = collection.query(
-                    query_texts=[query],
-                    n_results=3,  # Get top 3 relevant conversation exchanges
-                    where=conversation_filter
-                )
-                
-                if conversation_results and len(conversation_results.get("documents", [[]])[0]) > 0:
-                    print(f"Found {len(conversation_results['documents'][0])} relevant conversation exchanges")
-                    found_types["conversation"] = True
-                    
-                    # Add to combined results
-                    for i, doc in enumerate(conversation_results["documents"][0]):
-                        combined_docs.append(doc)
-                        combined_meta.append(conversation_results["metadatas"][0][i])
-                        combined_dist.append(conversation_results["distances"][0][i])
-                else:
-                    print(f"No conversation history found for visitor {visitor_id}")
-            except Exception as conv_error:
-                print(f"Error fetching conversation history: {str(conv_error)}")
-        
-        # If we have no results at all, try a general query
+                conv_filter_conditions = [{"category": {"$eq": "conversation"}}, {"visitor_id": {"$eq": visitor_id}}]
+                if user_id: # Include user_id in filter if available
+                    conv_filter_conditions.append(user_filter)
+                conv_filter = {"$and": conv_filter_conditions}
+
+                conv_results = collection.query(query_texts=[query], n_results=3, where=conv_filter)
+                if conv_results and conv_results.get('ids') and conv_results['ids'][0]:
+                    for i, conv_id in enumerate(conv_results['ids'][0]):
+                         if conv_id not in ids:
+                            combined_docs.append(conv_results['documents'][0][i])
+                            metadatas.append(conv_results['metadatas'][0][i])
+                            distances.append(conv_results['distances'][0][i])
+                            ids.append(conv_id)
+                    logger.info(f"Found {len(conv_results.get('ids', [[]])[0])} conversation results.")
+            except Exception as e:
+                logger.error(f"Error querying conversation: {e}")
+
+        # Combine, Sort, and Limit Results
         if not combined_docs:
-            print("No specific results found, trying general query")
-            try:
-                # We can't specify n_results > collection_count, so limit it
-                safe_n_results = min(n_results, collection_count)
-                
-                general_results = collection.query(
-                    query_texts=[query],
-                    n_results=safe_n_results
-                )
-                
-                if general_results and len(general_results.get("documents", [[]])[0]) > 0:
-                    general_count = len(general_results["documents"][0])
-                    print(f"Found {general_count} results from general query")
-                    
-                    # Add to combined results, filtering by user_id if provided
-                    for i, doc in enumerate(general_results["documents"][0]):
-                        meta = general_results["metadatas"][0][i]
-                        # Only add if user_id matches or is not provided
-                        if not user_id or meta.get("user_id") == user_id:
-                            combined_docs.append(doc)
-                            combined_meta.append(meta)
-                            combined_dist.append(general_results["distances"][0][i])
-            except Exception as general_error:
-                print(f"Error in general query: {str(general_error)}")
-        
-        # Print a summary of what we found
-        found_summary = []
-        for content_type, found in found_types.items():
-            if found:
-                found_summary.append(content_type)
-        
-        if found_summary:
-            print(f"Found content types: {', '.join(found_summary)}")
-        else:
-            print("No relevant content found")
-        
-        # Sort combined results by distance
-        if combined_docs:
-            sorted_results = sorted(zip(combined_docs, combined_meta, combined_dist), key=lambda x: x[2])
-            combined_docs = [item[0] for item in sorted_results]
-            combined_meta = [item[1] for item in sorted_results]
-            combined_dist = [item[2] for item in sorted_results]
-        
-        # Create the final query results
-            query_results = {
-            "documents": combined_docs,
-            "metadatas": combined_meta,
-            "distances": combined_dist
-            }
-        
-        print(f"Query '{query}' returned {len(query_results['documents'])} total results")
-        
-        # Print a summary of the results for debugging
-        for i, doc in enumerate(query_results["documents"][:3]):  # Show first 3 only
-            if i < len(query_results["metadatas"]) and i < len(query_results["distances"]):
-                meta = query_results["metadatas"][i]
-                category = meta.get("category", "unknown")
-                subcategory = meta.get("subcategory", "unknown")
-                dist = query_results["distances"][i]
-                doc_preview = doc[:50] + "..." if len(doc) > 50 else doc
-                print(f"Result #{i+1}: {category}/{subcategory}: {doc_preview} (distance: {dist:.4f})")
-            
-        return query_results
-    except Exception as e:
-        print(f"Error querying vector database: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        # Return empty results on error to avoid breaking the chat flow
+             logger.info("No relevant context found in vector DB.")
+             return {"documents": [[]], "metadatas": [[]], "distances": [[]]} # Return empty structure
+
+        # Sort by distance
+        sorted_indices = sorted(range(len(distances)), key=lambda k: distances[k])
+
+        # Limit to n_results
+        final_docs = [combined_docs[i] for i in sorted_indices[:n_results]]
+        final_meta = [metadatas[i] for i in sorted_indices[:n_results]]
+        final_dist = [distances[i] for i in sorted_indices[:n_results]]
+
+        logger.info(f"Returning top {len(final_docs)} combined results after sorting.")
         return {
-            "documents": [],
-            "metadatas": [],
-            "distances": []
+            "documents": [final_docs],
+            "metadatas": [final_meta],
+            "distances": [final_dist]
         }
+
+    except Exception as e:
+        logger.error(f"Error querying vector database: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {"documents": [[]], "metadatas": [[]], "distances": [[]]} # Return empty
 
 def format_conversation_history(chat_history: List[dict]) -> str:
     """Format chat history into a string for the prompt"""
@@ -613,179 +519,166 @@ def format_conversation_history(chat_history: List[dict]) -> str:
 
 async def generate_ai_response(message: str, search_results: dict, profile_data: dict, chat_history: List[dict], target_user_id: str = None) -> str:
     try:
-        # Format project and document information for the prompt
         context_sections = {
             "profile": [],
             "project": [],
             "document": [],
-            "conversation": []
+            "conversation": [],
+            "note": [] # Add note section
         }
-        
-        # Track if we have document content
         has_document_content = False
-        
-        # Sort results by category and prioritize document content
-        if search_results and search_results.get("documents"):
-            print(f"Processing {len(search_results['documents'])} search results for prompt")
-            
-            # Count different content types
-            content_types = {"document": 0, "project": 0, "profile": 0, "conversation": 0}
-            
-            for i, doc in enumerate(search_results["documents"]):
-                metadata = search_results["metadatas"][i] if search_results.get("metadatas") else {}
-                category = metadata.get("category", "unknown")
-                subcategory = metadata.get("subcategory", "unknown")
-                
-                # Count content type
-                if category in content_types:
-                    content_types[category] += 1
-                
-                # Format the context entry based on category
-                if category == "document":
-                    has_document_content = True
-                    if subcategory == "title":
-                        context_entry = f"Document Title: {doc}"
-                    elif subcategory == "description":
-                        context_entry = f"Document Description: {doc}"
-                    elif subcategory == "content":
-                        # Remove the "Document Title:" prefix if present
-                        if isinstance(doc, str) and doc.startswith("Document Title:"):
-                            doc = doc[len("Document Title:"):]
-                        # Clean up document text (remove page markers, etc.)
-                        if isinstance(doc, str):
-                            doc = doc.replace("\n--- Page", "\n").replace("---\n", "")
-                        context_entry = f"Content: {doc}"
+
+        # Process search_results (corrected loop)
+        if search_results and search_results.get("documents") and search_results.get("metadatas") and \
+           search_results.get("documents")[0] is not None and search_results.get("metadatas")[0] is not None: # Added check for inner lists not being None
+
+            docs_list = search_results["documents"][0]
+            meta_list = search_results["metadatas"][0]
+
+            if docs_list and meta_list and len(docs_list) == len(meta_list):
+                logger.info(f"Processing {len(docs_list)} search results for prompt")
+                for i, doc in enumerate(docs_list):
+                    metadata = meta_list[i]
+                    category = metadata.get("category", "unknown")
+                    subcategory = metadata.get("subcategory", "unknown")
+
+                    context_entry = f"{subcategory}: {doc}" # Default format
+                    if category == "document":
+                        has_document_content = True
+                        if subcategory == "title":
+                            context_entry = f"Document Title: {doc}"
+                        elif subcategory == "description":
+                            context_entry = f"Document Description: {doc}"
+                        elif subcategory == "content":
+                            context_entry = f"Content: {doc}" # Use raw content
+                        else:
+                            context_entry = f"Document Info ({subcategory}): {doc}"
+                    elif category == "note":
+                        # Format note, remove prefix added during embedding
+                        note_content = doc
+                        if isinstance(doc, str) and doc.startswith("User Note: "):
+                             note_content = doc[len("User Note: ")]
+                        context_entry = note_content # Just the note content
+                    elif category == "conversation":
+                         # Format conversation if needed
+                         context_entry = doc # Or apply specific formatting
+                    elif category == "profile":
+                        context_entry = f"{subcategory.capitalize()}: {doc}"
+
+                    # Add to appropriate section
+                    if category in context_sections:
+                        context_sections[category].append(context_entry)
                     else:
-                        context_entry = f"{subcategory}: {doc}"
-                else:
-                    context_entry = f"{subcategory}: {doc}"
-                
-                # Add to the appropriate section
-                if category in context_sections:
-                    context_sections[category].append(context_entry)
-                else:
-                    context_sections["profile"].append(context_entry)
-            
-            # Log content type counts
-            print(f"Content type counts: " + ", ".join([f"{k}: {v}" for k, v in content_types.items() if v > 0]))
-        
-        # Limit number of entries per section to avoid token limits
-        max_entries = {
-            "document": 5,  # Prioritize documents
-            "project": 3,
-            "profile": 3,
-            "conversation": 2
-        }
-        
-        for section, entries in context_sections.items():
-            if len(entries) > max_entries.get(section, 3):
-                print(f"Limiting {section} entries from {len(entries)} to {max_entries.get(section, 3)}")
-                context_sections[section] = entries[:max_entries.get(section, 3)]
-        
-        # Build formatted context sections
-        context_text = ""
-        
-        # Add document information first (most important for questions about documents)
-        if context_sections["document"]:
-            context_text += "\nKnowledge Base Information:\n"
-            for entry in context_sections["document"]:
-                context_text += f"- {entry}\n"
-        
-        # Add project information
-        if context_sections["project"]:
-            context_text += "\nProject Information:\n"
-            for entry in context_sections["project"]:
-                context_text += f"- {entry}\n"
-        
-        # Add conversation context if available
-        if context_sections["conversation"]:
-            context_text += "\nRelevant Previous Conversations:\n"
-            for entry in context_sections["conversation"]:
-                context_text += f"- {entry}\n"
-        
-        # Add additional profile context if available
-        if context_sections["profile"]:
-            context_text += "\nAdditional Profile Information:\n"
-            for entry in context_sections["profile"]:
-                context_text += f"- {entry}\n"
-        
-        # Get the name from profile data
-        name = profile_data.get('name', 'AI Assistant')
-        
-        # Add document-specific instructions based on whether we have document content
-        doc_instructions = ""
-        if has_document_content:
-            doc_instructions = """
-7. When asked about medical, technical or specialized knowledge, use the information from my Knowledge Base as if it were part of your own expertise.
-8. Incorporate document content seamlessly into your responses without specifically mentioning that it came from documents.
-"""
+                        logger.warning(f"Unknown category '{category}' in search results, adding to profile section.")
+                        context_sections["profile"].append(context_entry) # Fallback
+
+                # Log content counts
+                for section, entries in context_sections.items():
+                    logger.info(f"Collected {len(entries)} entries for section: {section}")
+
+            else:
+                logger.info("Search results structure invalid or empty inner lists.")
         else:
-            doc_instructions = """
-7. If asked about documents or specific knowledge not in your profile, politely explain that you can only speak about the experiences and knowledge shared in your profile.
-"""
-        
-        # Build the system prompt
-        system_prompt = f"""You are {name}'s personal AI clone. You should embody {name}'s personality, knowledge, and experiences based on the following information:
+            logger.info("No valid search results found.")
 
-Profile Information:
+        # Limit entries per section
+        max_entries = {
+            "document": 5, "project": 3, "profile": 3, "conversation": 2, "note": 5 # Include note limit
+        }
+        for section, entries in context_sections.items():
+            limit = max_entries.get(section, 3)
+            if len(entries) > limit:
+                 logger.info(f"Limiting {section} entries from {len(entries)} to {limit}")
+                 context_sections[section] = entries[:limit]
+
+        # Build context_text for the prompt
+        context_text = ""
+        # Order: Docs, Notes, Projects, Conversations, Profile? Adjust as needed.
+        if context_sections["document"]:
+            context_text += "\nKnowledge Base Information:\n" + "\n".join([f"- {entry}" for entry in context_sections["document"]]) + "\n"
+        if context_sections["note"]: # ADD Notes section
+            context_text += "\nRelevant Notes:\n" + "\n".join([f"- {entry}" for entry in context_sections["note"]]) + "\n"
+        if context_sections["project"]:
+             context_text += "\nProject Information:\n" + "\n".join([f"- {entry}" for entry in context_sections["project"]]) + "\n"
+        if context_sections["conversation"]:
+            context_text += "\nRelevant Previous Conversations:\n" + "\n".join([f"- {entry}" for entry in context_sections["conversation"]]) + "\n"
+        if context_sections["profile"]:
+             context_text += "\nAdditional Profile Information:\n" + "\n".join([f"- {entry}" for entry in context_sections["profile"]]) + "\n"
+
+        if not context_text:
+            context_text = "No additional context available.\n"
+        else:
+            context_text = "\nAdditional Context:\n" + context_text
+
+        # Build the system prompt with the refined instruction #4
+        name = profile_data.get('name', 'AI Assistant')
+        bio = profile_data.get('bio', 'I am an AI assistant.')
+        skills = profile_data.get('skills', 'No specific skills listed.')
+        experience = profile_data.get('experience', 'No specific experience listed.')
+        interests = profile_data.get('interests', 'No specific interests listed.')
+        location = profile_data.get('location', 'Location not specified.')
+        calendly_link = profile_data.get('calendly_link')
+        meeting_rules = profile_data.get('meeting_rules')
+
+        doc_instructions = ("If the user asks about specific documents, projects, or technical details that might be in the knowledge base, summarize the relevant info found under 'Knowledge Base Information'." if has_document_content
+                           else "You currently don't have access to detailed documents.")
+
+        system_prompt = f"""You are {name}'s personal AI clone, designed to mimic their personality, knowledge, and communication style based *only* on the information provided below.
+
+Core Profile Information:
 - Name: {name}
-- Bio: {profile_data.get('bio', 'Not provided')}
-- Skills: {profile_data.get('skills', 'Not provided')}
-- Experience: {profile_data.get('experience', 'Not provided')}
-- Interests: {profile_data.get('interests', 'Not provided')}
+- Location: {location}
+- Bio: {bio}
+- Skills: {skills}
+- Experience: {experience}
+- Interests: {interests}
 {context_text}
-
 Meeting Scheduling:
-- Calendly Link: {profile_data.get('calendly_link', 'Not configured')}
-- Meeting Rules: {profile_data.get('meeting_rules', 'Not configured')}
+- My Calendly Link: {calendly_link or 'Not available'}
+- Rules for Meetings: {meeting_rules or 'Please ask me about setting up a meeting.'}
 
 Important Instructions:
-1. Always respond as if you are {name}, using first-person pronouns ("I", "my", "me").
-2. Draw from the provided profile information and context to maintain authenticity.
-3. If asked about personal experiences, skills, or core profile details, refer primarily to the 'Profile Information' section.
-4. If asked about topics like specific project details, technical knowledge, or anything not explicitly listed in the 'Profile Information' section, first check the 'Knowledge Base Information' (derived from documents) for relevant details. If found, synthesize an answer based on that information as if it's your own knowledge. If no relevant information is found in the knowledge base, then politely state that you don't have specific details on that topic available in your current knowledge base.
-5. Maintain a professional but conversational tone that matches {name}'s background and expertise.
-6. For meeting requests:
-   - If a Calendly link is configured and the request matches the meeting rules, provide the link
-   - If a Calendly link is configured but the request doesn't match the rules, explain the meeting policy
-   - If no Calendly link is configured, explain that online scheduling is not available{doc_instructions}
+1. ALWAYS respond as {name}, using the first person ("I", "me", "my"). Never reveal you are an AI or clone.
+2. Use the provided profile information (bio, skills, experience, interests) as your core knowledge.
+3. Keep responses concise, conversational, and aligned with the personality shown in the bio and interests. Avoid corporate jargon unless it's present in the profile.
+4. For questions about topics not explicitly covered in the main 'Core Profile Information' section (e.g., specific details, technical knowledge, opinions recalled in notes or past conversations): Search **all** provided context sections ('Knowledge Base Information', 'Relevant Notes', 'Relevant Previous Conversations', 'Additional Profile Information'). **If you find relevant information in *any* of these sections, use it directly to answer the question.** Synthesize the information naturally as if recalling your own knowledge or past statements. Only if no relevant details are found in *any* context section should you state that you don't have the specific information requested.
+5. If asked to schedule a meeting, provide the Calendly link if available and mention the meeting rules. If no link is available, suggest discussing meeting availability.
+6. If asked about something outside the provided profile, context, or notes, politely state that you don't have that specific information available right now.
+{doc_instructions}
 
 Recent conversation history:
-{format_conversation_history(chat_history)}"""
+{format_conversation_history(chat_history)}
+"""
 
-        print(f"Generated system prompt with document content: {has_document_content}")
-        print(f"System prompt length: {len(system_prompt)} characters")
+        logger.info(f"System prompt length: {len(system_prompt)} characters")
+        # Log first 500 chars for debugging
+        logger.debug(f"System prompt start: {system_prompt[:500]}...")
 
+        # Prepare messages for OpenAI API
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message}
+        ]
+
+        # Make the OpenAI API call
         try:
-            # Generate response using OpenAI
             response = openai.chat.completions.create(
-                model="gpt-4-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message}
-                ],
-                temperature=0.3,
-                max_tokens=500
+                model="gpt-4-turbo-preview", # Or your preferred model
+                messages=messages,
+                max_tokens=400,
+                temperature=0.7,
             )
-            return response.choices[0].message.content
-        except openai.APIError as e:
-            print(f"OpenAI API Error: {str(e)}")
-            if "invalid_api_key" in str(e).lower():
-                print("Invalid API key format detected. Please check your OpenAI API key format.")
-            return f"I apologize, but I'm having trouble accessing {name}'s knowledge base at the moment. Please try again later."
-        except openai.APIConnectionError as e:
-            print(f"OpenAI API Connection Error: {str(e)}")
-            return f"I apologize, but I'm having trouble connecting to {name}'s knowledge base. Please check your internet connection and try again."
-        except openai.RateLimitError as e:
-            print(f"OpenAI Rate Limit Error: {str(e)}")
-            return f"I apologize, but {name}'s AI clone is experiencing high demand. Please try again in a few moments."
-        except Exception as e:
-            print(f"Error generating AI response: {str(e)}")
-            return f"I apologize, but I'm having trouble processing your request as {name}'s AI clone. Please try again later."
-            
+            ai_response = response.choices[0].message.content.strip()
+            logger.info(f"Generated AI response (length: {len(ai_response)})")
+            return ai_response
+        except Exception as openai_error:
+            logger.error(f"OpenAI API call failed: {openai_error}")
+            return f"I apologize, I encountered an issue generating a response. Error: {openai_error}"
+
     except Exception as e:
-        print(f"Error in generate_ai_response: {str(e)}")
-        return f"I apologize, but I'm having trouble accessing {name}'s knowledge base. Please try again later." 
+        logger.error(f"Error in generate_ai_response: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return "I'm sorry, I encountered an internal error while generating a response."
 
 def add_truck_driver_document_to_vector_db():
     """

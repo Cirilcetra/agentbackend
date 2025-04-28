@@ -9,7 +9,8 @@ import uuid
 from app import models
 from app.database import get_profile_data, update_profile_data, log_chat_message, get_chat_history, get_or_create_chatbot, get_or_create_conversation, get_or_create_visitor
 from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
-from app.routes import chatbot, profiles, admin
+from app.routes import chatbot, profiles, admin, documents, chatbot as chatbot_routes
+from app.routes import notes
 import time
 import openai
 from dotenv import load_dotenv
@@ -20,8 +21,6 @@ from starlette.responses import Response, FileResponse, JSONResponse
 import re
 import jwt
 from fastapi.staticfiles import StaticFiles
-from app.routes import chatbot as chatbot_routes
-from app.routes import documents
 
 # EMERGENCY FIX - Import the emergency endpoint
 try:
@@ -123,7 +122,8 @@ allowed_origins = [
     "https://agentclone-bo5zjmw3l-cirils-projects-86482382.vercel.app", # Previous Vercel deployment
     "https://agentclone.vercel.app", # Previous Vercel deployment
     "https://agentclone-4b16fnadp-cirils-projects-86482382.vercel.app", # New Vercel deployment
-    "https://agentclone-k74ekjy3m-cirils-projects-86482382.vercel.app"  # Additional Vercel deployment
+    "https://agentclone-k74ekjy3m-cirils-projects-86482382.vercel.app", # Additional Vercel deployment
+    "https://agentclone-p4zcvrxde-cirils-projects-86482382.vercel.app"  # Latest Vercel deployment
 ]
 
 # Add any additional origins from environment variable if set
@@ -152,6 +152,7 @@ except NameError:
 
 # Add the chatbot routes
 app.include_router(chatbot_routes.router)
+app.include_router(notes.router)
 
 # Define models
 class ProfileData(BaseModel):
