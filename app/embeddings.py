@@ -638,13 +638,15 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         tone_instructions = ""
         personality_instructions = ""
         style_instructions = ""
+        user_instructions = ""
 
         if chatbot_config:
             tone = chatbot_config.get('tone')
             personality = chatbot_config.get('personality')
             style = chatbot_config.get('communicationStyle') # Use communicationStyle for key
+            user_instructions = chatbot_config.get('instructions', '')  # Extract user instructions
 
-            logger.info(f"Applying chatbot config: Tone={tone}, Personality={personality}, Style={style}")
+            logger.info(f"Applying chatbot config: Tone={tone}, Personality={personality}, Style={style}, Instructions provided: {bool(user_instructions)}")
 
             if tone:
                 tone_instructions = f"Adopt a {tone} tone."
@@ -660,6 +662,10 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
                 style_instructions = f"Use a {style} communication style."
         # -------------------------------------------
 
+        # Combine all instructions
+        combined_instructions = f"\n--- Chatbot Persona ---\n{tone_instructions}\n{personality_instructions}\n{style_instructions}"
+        if user_instructions:
+            combined_instructions += f"\n--- Specific Instructions ---\n{user_instructions}"
 
         doc_instructions = ("If the user asks about specific documents, projects, or technical details that might be in the knowledge base, summarize the relevant info found under 'Knowledge Base Information'." if has_document_content
                            else "You currently don't have access to detailed documents.")
@@ -701,6 +707,10 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         Recent conversation history:
         {format_conversation_history(chat_history)}
         """
+
+        # Add combined instructions if available
+        if combined_instructions:
+            system_prompt += f"\n{combined_instructions}"
 
         logger.info(f"System prompt length: {len(system_prompt)} characters")
         logger.debug(f"System prompt start: {system_prompt[:500]}...")

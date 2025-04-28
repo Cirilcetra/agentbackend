@@ -33,6 +33,7 @@ class ChatHistoryItem(BaseModel):
     visitor_id: str
     visitor_name: Optional[str] = None
     timestamp: str
+    conversation_id: Optional[str] = None
 
 
 class ChatHistoryResponse(BaseModel):

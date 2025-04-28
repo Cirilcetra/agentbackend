@@ -117,112 +117,130 @@ async def create_admin(admin_data: models.AdminCreateRequest):
 
 @router.get("/chat/history", response_model=models.ChatHistoryResponse)
 async def get_admin_chat_history(
-    limit: int = Query(1000, description="Maximum number of messages to return"),
+    page: int = Query(1, description="Page number for pagination", ge=1),
+    page_size: int = Query(20, description="Number of messages per page", ge=1, le=100),
     target_user_id: Optional[str] = Query(None, description="Filter by user ID"),
     user = Depends(verify_admin_token)
 ):
     """
     Get all chat history for authenticated users.
-    Fetches conversations, messages, and visitor names.
+    Fetches conversations, messages, and visitor names with pagination.
     """
     try:
         if not supabase:
             raise HTTPException(status_code=500, detail="Supabase client not initialized")
         
         user_id = target_user_id or user.id
-        logger.info(f"Fetching admin chat history for user: {user_id}, limit: {limit}")
+        logger.info(f"Fetching admin chat history for user: {user_id}, page: {page}, page_size: {page_size}")
 
-        # Step 1: Get all conversations for this user, including visitor_id
+        # Step 1: Fetch all conversations for this user
         conversations_response = supabase.table("conversations") \
             .select("id, visitor_id") \
             .eq("user_id", user_id) \
+            .order("created_at", desc=False) \
+            .limit(1000) \
             .execute()
         
         if not conversations_response.data:
             logger.info(f"No conversations found for user {user_id}")
             return models.ChatHistoryResponse(history=[], count=0)
 
-        # Create maps: conversation_id -> visitor_id and collect unique visitor_ids
-        conversation_to_visitor_map = {}
-        visitor_ids = set()
-        for conv in conversations_response.data:
-            if conv.get("id") and conv.get("visitor_id"):
-                conversation_to_visitor_map[conv["id"]] = conv["visitor_id"]
-                visitor_ids.add(conv["visitor_id"])
+        # Extract conversation IDs and visitor IDs in one pass
+        conversation_ids = [conv["id"] for conv in conversations_response.data if conv.get("id")]
+        conversation_to_visitor = {
+            conv["id"]: conv["visitor_id"] 
+            for conv in conversations_response.data 
+            if conv.get("id") and conv.get("visitor_id")
+        }
+        visitor_ids = list(set(filter(None, [conv.get("visitor_id") for conv in conversations_response.data])))
 
+        if not conversation_ids:
+             logger.warning(f"No valid conversation IDs found for user {user_id}")
+             return models.ChatHistoryResponse(history=[], count=0)
+             
         if not visitor_ids:
             logger.warning(f"No valid visitor IDs found in conversations for user {user_id}")
-            return models.ChatHistoryResponse(history=[], count=0)
+            # Proceed, but visitor names might be missing
 
-        # Step 2: Get visitor names for all unique visitor IDs
+        # Step 2: Fetch visitor names in a single query
         visitor_name_map = {}
         if visitor_ids:
-            visitors_response = supabase.table("visitors") \
-                .select("id, name") \
-                .in_("id", list(visitor_ids)) \
+            try:
+                visitors_response = supabase.table("visitors") \
+                    .select("id, name") \
+                    .in_("id", visitor_ids) \
+                    .execute()
+                
+                if visitors_response.data:
+                    visitor_name_map = {vis["id"]: vis.get("name") for vis in visitors_response.data}
+                    logger.info(f"Fetched names for {len(visitor_name_map)} visitors")
+                else:
+                     logger.warning(f"Could not fetch names for visitor IDs: {visitor_ids}")
+            except Exception as e:
+                logger.error(f"Error fetching visitor names: {e}")
+
+
+        # Step 3: Fetch messages for all conversations in a single query with pagination
+        offset = (page - 1) * page_size
+        
+        try:
+            messages_response = supabase.table("messages") \
+                .select("*") \
+                .in_("conversation_id", conversation_ids) \
+                .order("created_at", desc=True) \
+                .range(offset, offset + page_size - 1) \
                 .execute()
             
-            if visitors_response.data:
-                visitor_name_map = {vis["id"]: vis.get("name") for vis in visitors_response.data}
-                logger.info(f"Fetched names for {len(visitor_name_map)} visitors")
+            if messages_response.data is None:
+                 logger.warning(f"Messages query returned None data for conversations {conversation_ids}")
+                 raw_messages = []
             else:
-                 logger.warning(f"Could not fetch names for visitor IDs: {visitor_ids}")
-
-        # Step 3: Collect messages from all conversations, adding visitor details
-        all_messages = []
-        conversation_ids = list(conversation_to_visitor_map.keys())
-
+                 raw_messages = messages_response.data
+        except Exception as e:
+            logger.error(f"Error fetching messages: {e}")
+            raw_messages = []
+        
+        # Step 4: Get total message count for pagination
+        total_count = 0
         if conversation_ids:
-             # Fetch messages for all relevant conversations in one go if possible
-             # Assuming get_chat_history fetches by ONE conversation_id at a time.
-             # If it could fetch for multiple, this loop would be optimized.
-             # For now, iterate and fetch individually.
-             for conversation_id in conversation_ids:
-                 visitor_id = conversation_to_visitor_map.get(conversation_id)
-                 if not visitor_id:
-                     continue # Should not happen based on map creation
+            try:
+                count_response = supabase.table("messages") \
+                    .select("id", count="exact") \
+                    .in_("conversation_id", conversation_ids) \
+                    .execute()
+                total_count = count_response.count if hasattr(count_response, "count") and count_response.count is not None else 0
+            except Exception as count_error:
+                logger.warning(f"Could not get exact message count for user {user_id}: {count_error}. Using length of fetched page.")
+                total_count = len(raw_messages) # Fallback, might be inaccurate
 
-                 # Get messages for this conversation
-                 conversation_messages = get_chat_history(conversation_id=conversation_id, limit=limit) # Limit per conversation for now
-
-                 # Add visitor_id and visitor_name to each message
-                 visitor_name = visitor_name_map.get(visitor_id)
-                 for msg in conversation_messages:
-                     if isinstance(msg, dict):
-                         msg["visitor_id"] = visitor_id
-                         msg["visitor_name"] = visitor_name # Add visitor name
-                         msg["timestamp"] = msg.get("created_at") # Ensure timestamp field matches model expectation
-                     else:
-                         logger.warning(f"Found non-dict message item: {msg} in conversation {conversation_id}")
-                 all_messages.extend(conversation_messages or [])
-
-        # Sort all messages by timestamp (most recent first)
-        all_messages.sort(key=lambda x: x.get("created_at", "") if isinstance(x, dict) else "", reverse=True)
-        
-        # Apply overall limit to the combined list
-        if limit and len(all_messages) > limit:
-            all_messages = all_messages[:limit]
-            
-        # Ensure all items are dicts and format for the response model
+        # Step 5: Format messages into ChatHistoryItem including visitor details
         formatted_history = []
-        for msg in all_messages:
-             if isinstance(msg, dict):
-                 # Ensure keys match ChatHistoryItem model (adjust if needed)
-                 # The model expects 'timestamp', so we added it above from 'created_at'
-                 try:
-                    formatted_history.append(models.ChatHistoryItem(**msg))
-                 except Exception as model_error:
-                     logger.error(f"Error creating ChatHistoryItem from message data: {msg}, Error: {model_error}")
-                     # Optionally skip this message or add a default representation
+        for msg in raw_messages:
+            conversation_id = msg.get("conversation_id")
+            visitor_id = conversation_to_visitor.get(conversation_id)
+            visitor_name = visitor_name_map.get(visitor_id) if visitor_id else None
+            
+            formatted_history.append(
+                models.ChatHistoryItem(
+                    id=msg.get("id", str(uuid.uuid4())), # Use message ID or generate one
+                    message=msg.get("message", ""),
+                    sender=msg.get("sender", "unknown"),
+                    response=msg.get("response"),
+                    timestamp=msg.get("created_at", ""),
+                    visitor_id=visitor_id or "unknown", # Provide visitor_id
+                    visitor_name=visitor_name, # Add visitor name
+                    conversation_id=conversation_id # Add conversation_id
+                )
+            )
 
-        logger.info(f"Returning {len(formatted_history)} messages in admin chat history response")
-        
+        logger.info(f"Returning {len(formatted_history)} messages for page {page}, total count: {total_count}")
         return models.ChatHistoryResponse(
             history=formatted_history,
-            count=len(formatted_history)
+            count=total_count
         )
+
     except Exception as e:
-        logger.error(f"Error getting admin chat history: {e}", exc_info=True)
+        logger.exception(f"Error fetching admin chat history: {e}") # Log the full traceback
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get chat history: {str(e)}"
