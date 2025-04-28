@@ -73,7 +73,7 @@ class ChatbotModel(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     name: str
-    slug: str
+    slug: Optional[str] = None
     description: Optional[str] = None
     configuration: Optional[Dict[str, Any]] = None
     is_public: bool = True

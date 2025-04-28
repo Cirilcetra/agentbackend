@@ -322,6 +322,7 @@ def add_document_to_vector_db(document_data, user_id):
 
 def embed_and_store_notes(user_id: uuid.UUID, notes: List[Dict]):
     """Embeds notes and stores them in the user's vector DB collection."""
+    logger.info(f"EMBEDDING TASK STARTED: Received request to embed notes for user_id: {user_id}") # Log start
     if not user_id:
         logger.error("EMBEDDING ERROR: No user_id provided for embedding notes.")
         return
@@ -332,6 +333,7 @@ def embed_and_store_notes(user_id: uuid.UUID, notes: List[Dict]):
     try:
         collection_name = "portfolio_data"
         # Ensure chroma_client is defined and accessible in this scope
+        logger.info(f"EMBEDDING INFO: Accessing ChromaDB collection '{collection_name}'")
         collection = chroma_client.get_or_create_collection(
             name=collection_name,
             embedding_function=openai_ef # Ensure openai_ef is defined and accessible
@@ -353,28 +355,38 @@ def embed_and_store_notes(user_id: uuid.UUID, notes: List[Dict]):
 
             document_text = f"User Note: {content}" # Prefix to distinguish notes
             documents.append(document_text)
+            user_id_str = str(user_id) # Ensure user_id is string for metadata
+            note_id_str = str(note_id) # Ensure note_id is string
             metadatas.append({
                 "category": "note", # Specific category
-                "user_id": str(user_id),
-                "note_id": str(note_id)
+                "user_id": user_id_str,
+                "note_id": note_id_str
             })
-            ids.append(f"note_{user_id}_{note_id}") # Unique ChromaDB ID
+            ids.append(f"note_{user_id_str}_{note_id_str}") # Unique ChromaDB ID
 
         if not documents:
-            logger.info(f"EMBEDDING INFO: No valid notes found to add for user {user_id}.")
+            logger.info(f"EMBEDDING INFO: No valid notes found to add for user {user_id} after filtering.")
             return
+
+        # Log the data being sent to ChromaDB
+        logger.info(f"EMBEDDING INFO: Preparing to add {len(documents)} note(s) to ChromaDB for user {user_id_str}.")
+        # Optional: Log details for debugging (be cautious with sensitive data)
+        # logger.debug(f"EMBEDDING DEBUG: IDs: {ids}")
+        # logger.debug(f"EMBEDDING DEBUG: Metadatas: {metadatas}")
+        # logger.debug(f"EMBEDDING DEBUG: Documents: {documents}")
 
         # Add/update notes in ChromaDB
         # Note: .add() with existing IDs acts like an upsert in ChromaDB
+        logger.info(f"EMBEDDING INFO: Calling collection.add() for user {user_id_str}...")
         collection.add(
             documents=documents,
             metadatas=metadatas,
             ids=ids
         )
-        logger.info(f"EMBEDDING SUCCESS: Successfully added/updated {len(documents)} notes in vector DB for user {user_id}")
+        logger.info(f"EMBEDDING SUCCESS: Successfully called collection.add() for {len(documents)} notes for user {user_id_str}") # Changed log message
 
     except Exception as e:
-        logger.error(f"EMBEDDING ERROR: Failed to embed notes for user {user_id}: {e}")
+        logger.error(f"EMBEDDING ERROR: Failed to embed notes for user {user_id_str}: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
 
 def query_vector_db(query, n_results=8, user_id=None, visitor_id=None, include_conversation=True):
@@ -428,7 +440,10 @@ def query_vector_db(query, n_results=8, user_id=None, visitor_id=None, include_c
         if user_id:
             try:
                 note_filter = {"$and": [{"category": {"$eq": "note"}}, user_filter]}
+                logger.info(f"QUERYING NOTES with filter: {note_filter}") # Add log for filter
                 note_results = collection.query(query_texts=[query], n_results=5, where=note_filter) # Example N
+                logger.info(f"RAW NOTE RESULTS from ChromaDB: {note_results}") # Add log for raw results
+
                 if note_results and note_results.get('ids') and note_results['ids'][0]:
                     # Avoid adding duplicates already found
                     for i, note_id in enumerate(note_results['ids'][0]):
@@ -439,7 +454,7 @@ def query_vector_db(query, n_results=8, user_id=None, visitor_id=None, include_c
                             ids.append(note_id)
                     logger.info(f"Found {len(note_results.get('ids', [[]])[0])} note results.")
                 else:
-                     logger.info(f"No relevant notes found for query.")
+                     logger.info(f"No relevant notes found for query based on raw results structure.") # Adjusted log message
 
             except Exception as e:
                 logger.error(f"Error querying notes: {e}")
@@ -619,36 +634,31 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         calendly_link = profile_data.get('calendly_link')
         meeting_rules = profile_data.get('meeting_rules')
 
-        # --- Incorporate Chatbot Configuration --- #
-        personality_instructions = ""
+        # --- Chatbot Configuration ---
         tone_instructions = ""
+        personality_instructions = ""
         style_instructions = ""
 
         if chatbot_config:
-            tone = chatbot_config.get('tone', 'Friendly')
-            personality = chatbot_config.get('personality', 'Helpful')
-            style = chatbot_config.get('communicationStyle', 'Detailed')
+            tone = chatbot_config.get('tone')
+            personality = chatbot_config.get('personality')
+            style = chatbot_config.get('communicationStyle') # Use communicationStyle for key
 
-            logger.info(f"Using chatbot config: Tone={tone}, Personality={personality}, Style={style}")
+            logger.info(f"Applying chatbot config: Tone={tone}, Personality={personality}, Style={style}")
 
-            # Simple examples, these can be more complex
-            if tone == 'Friendly':
-                tone_instructions = "Maintain a friendly and approachable tone."
-            elif tone == 'Professional':
-                tone_instructions = "Maintain a professional and formal tone."
-            else:
+            if tone:
                 tone_instructions = f"Adopt a {tone} tone."
+            if personality:
+                # More nuanced personality handling
+                if isinstance(personality, list) and personality:
+                    personality_str = ", ".join(personality)
+                    personality_instructions = f"Embody the following personality traits: {personality_str}."
+                elif isinstance(personality, str) and personality:
+                     personality_instructions = f"Embody a {personality} personality."
 
-            if personality == 'Curious':
-                personality_instructions = "Show curiosity and ask clarifying questions."
-            else:
-                personality_instructions = f"Exhibit a {personality} personality."
-
-            if style == 'Short and punchy':
-                style_instructions = "Keep responses concise and to the point."
-            else:
+            if style:
                 style_instructions = f"Use a {style} communication style."
-        # --- End Chatbot Configuration --- #
+        # -------------------------------------------
 
 
         doc_instructions = ("If the user asks about specific documents, projects, or technical details that might be in the knowledge base, summarize the relevant info found under 'Knowledge Base Information'." if has_document_content
@@ -657,7 +667,7 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         # --- System Prompt Construction ---
         system_prompt = f"""
         You are an AI assistant representing {name}.
-        Your goal is to answer questions based *primarily* on the provided CONTEXT (Profile Info, Knowledge Base, Notes) and CONVERSATION HISTORY.
+        Your goal is to answer questions based *primarily* on the provided CONTEXT (Core Profile Info, Knowledge Base, Notes) and CONVERSATION HISTORY.
         You can synthesize information from these sources. If the context mentions relevant experience or work that sounds like a project, describe it when asked about projects.
         Do not make up information or answer questions outside of this scope.
 
@@ -665,14 +675,16 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         {tone_instructions} {personality_instructions} {style_instructions}
         Speak in the first person as if you are {name}. Always maintain this persona.
 
-        Core Profile Information:
-        - Name: {name}
-        - Location: {location}
-        - Bio: {bio}
-        - Skills: {skills}
-        - Experience: {experience}
-        - Interests: {interests}
+        --- CONTEXT ---
+        --- Core Profile Information ---
+        Name: {name}
+        Location: {location}
+        Bio: {bio}
+        Skills: {skills}
+        Experience: {experience}
+        Interests: {interests}
         {context_text}
+
         Meeting Scheduling:
         - My Calendly Link: {calendly_link or 'Not available'}
         - Rules for Meetings: {meeting_rules or 'Please ask me about setting up a meeting.'}
@@ -700,22 +712,32 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
 
         try:
             response = openai.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="gpt-4-turbo",
                 messages=messages,
-                max_tokens=400,
-                temperature=0.7,
+                temperature=0.3,
+                max_tokens=500
             )
             ai_response = response.choices[0].message.content.strip()
             logger.info(f"Generated AI response (length: {len(ai_response)})")
             return ai_response
+        except openai.APIError as e:
+            logger.error(f"OpenAI API Error: {str(e)}")
+            return f"I apologize, I encountered an API issue processing your request. Error details: {str(e)}"
+        except openai.APIConnectionError as e:
+            logger.error(f"OpenAI API Connection Error: {str(e)}")
+            return f"I apologize, I couldn't connect to the AI service. Please check the connection. Error details: {str(e)}"
+        except openai.RateLimitError as e:
+            logger.error(f"OpenAI Rate Limit Error: {str(e)}")
+            return f"I apologize, the AI service is currently overloaded. Please try again later. Error details: {str(e)}"
         except Exception as openai_error:
             logger.error(f"OpenAI API call failed: {openai_error}")
-            return f"I apologize, I encountered an issue generating a response. Error: {openai_error}"
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return f"I apologize, but I'm having trouble processing your request as {name}'s AI clone. Please try again later."
 
     except Exception as e:
-        logger.error(f"Error in generate_ai_response: {e}")
+        logger.error(f"Error in generate_ai_response outer block: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return "I'm sorry, I encountered an internal error while generating a response."
+        return "I'm sorry, I encountered an unexpected internal error while generating a response."
 
 def add_truck_driver_document_to_vector_db():
     """

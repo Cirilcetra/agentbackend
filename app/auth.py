@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 
 # Get JWT secret from environment
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+
+# --- Add Debug Logging --- #
+logger.info(f"DEBUG: Attempting to read SUPABASE_JWT_SECRET.")
+if SUPABASE_JWT_SECRET:
+    logger.info(f"DEBUG: SUPABASE_JWT_SECRET found. Length: {len(SUPABASE_JWT_SECRET)}, Starts with: {SUPABASE_JWT_SECRET[:3]}...")
+else:
+    logger.warning("DEBUG: SUPABASE_JWT_SECRET environment variable NOT found or is empty.")
+# --- End Debug Logging --- #
+
 if not SUPABASE_JWT_SECRET:
     logger.warning("SUPABASE_JWT_SECRET not found in environment variables. Authentication will not work properly.")
 
