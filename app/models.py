@@ -65,6 +65,8 @@ class ProfileData(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     calendly_link: Optional[str] = Field(None, description="Calendly link")
+    meeting_rules: Optional[str] = Field(None, description="Rules for meeting scheduling")
+    profile_photo_url: Optional[str] = Field(None, description="URL to user's profile photo")
 
 
 class ChatbotModel(BaseModel):

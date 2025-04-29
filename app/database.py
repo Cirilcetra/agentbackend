@@ -1,10 +1,10 @@
 import os
+import logging
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import time
 import json
 import uuid
-import logging
 import traceback
 from typing import List, Dict, Optional
 
@@ -16,7 +16,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Use the service role key for backend operations
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
+# Fallback to SUPABASE_KEY if service key is not set (less ideal, but provides backward compatibility)
+if not SUPABASE_KEY:
+    logger.warning("SUPABASE_SERVICE_KEY not found, falling back to SUPABASE_KEY. Ensure service role key is set for full backend permissions.")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # --- Add Logging Here (Near Supabase Init) ---
 logger.info(f"DATABASE INIT: Attempting Supabase connection.")
@@ -44,7 +49,7 @@ DEFAULT_PROFILE = {
 }
 
 # Initialize Supabase client or None if connection fails
-supabase = None
+supabase: Optional[Client] = None
 
 # Try to connect to Supabase
 try:
@@ -196,10 +201,16 @@ def update_profile_data(data, user_id=None):
         safe_fields = ["id", "user_id", "bio", "skills", "experience", 
                         "interests", "name", "location", 
                         "created_at", "updated_at",
-                        "calendly_link", "meeting_rules"]
+                        "calendly_link", "meeting_rules", "profile_photo_url"]
         
+        logger.debug(f"[DB Log] Safe fields for filtering: {safe_fields}")
+
+        # Keep keys that are in safe_fields. Allow None for profile_photo_url as the column is nullable.
+        # This ensures the key passes through if present in the incoming 'data' dict.
         filtered_data = {k: v for k, v in data.items() if k in safe_fields}
+        
         logger.info(f"Filtered profile data to: {list(filtered_data.keys())}")
+        logger.debug(f"[DB Log] Filtered data (full dictionary): {filtered_data}")
         
         # Handle required fields
         required_fields = ["bio", "skills", "experience", "interests"]

@@ -166,6 +166,7 @@ class ProfileData(BaseModel):
     user_id: Optional[str] = None  # Add user_id field for Supabase
     calendly_link: Optional[str] = None  # Calendly meeting scheduling link
     meeting_rules: Optional[str] = None  # Rules for allowing meeting requests
+    profile_photo_url: Optional[str] = None  # URL to user's profile photo
 
 class ChatMessage(BaseModel):
     role: str
@@ -254,6 +255,12 @@ async def update_profile_handler(profile_data: ProfileData, user_id: Optional[st
         logging.info(f"Profile data received: {profile_dict}")
         logging.info(f"User ID from query param: {user_id}")
         logging.info(f"User ID from profile data: {profile_dict.get('user_id')}")
+        
+        # Ensure profile_photo_url from the model is correctly placed in the dict,
+        # overriding any potential issue from the .dict() call for this specific field.
+        if hasattr(profile_data, 'profile_photo_url'):
+            profile_dict['profile_photo_url'] = profile_data.profile_photo_url
+            logging.info(f"Manually setting profile_photo_url in dict to: {profile_dict['profile_photo_url']}")
         
         # Check for user_id in profile_data, fall back to extracted JWT user_id or query param if not provided
         profile_user_id = profile_dict.get('user_id')

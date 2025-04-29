@@ -245,3 +245,87 @@ async def get_admin_chat_history(
             status_code=500,
             detail=f"Failed to get chat history: {str(e)}"
         ) 
+
+# Add this helper function near the top or before the delete endpoint
+async def verify_conversation_owner(conversation_id: uuid.UUID, user_id: uuid.UUID):
+    """Verifies that the given user_id owns the specified conversation_id."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database client not available")
+    try:
+        response = supabase.table("conversations") \
+            .select("user_id") \
+            .eq("id", str(conversation_id)) \
+            .maybe_single() \
+            .execute()
+
+        if response.data and response.data.get("user_id") == str(user_id):
+            return True
+        else:
+            # Log attempted access or just return False
+            logger.warning(f"User {user_id} attempted to access conversation {conversation_id} owned by another user or non-existent conversation.")
+            return False
+    except Exception as e:
+        logger.error(f"Error verifying conversation owner for conv {conversation_id}, user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error verifying conversation ownership")
+
+
+@router.delete("/chat/conversations/{conversation_id}", status_code=204)
+async def delete_admin_conversation(
+    conversation_id: str,
+    user = Depends(verify_admin_token) # Make sure verify_admin_token is defined/imported
+):
+    """
+    Deletes a specific conversation and all its associated messages.
+    Ensures the conversation belongs to the authenticated user.
+    """
+    logger.info(f"Attempting to delete conversation {conversation_id} for user {user.id}")
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase client not initialized")
+
+    try:
+        conv_uuid = uuid.UUID(conversation_id)
+    except ValueError:
+        logger.error(f"Invalid UUID format for conversation_id: {conversation_id}")
+        raise HTTPException(status_code=400, detail="Invalid conversation ID format.")
+
+    # Verify the user owns the conversation
+    is_owner = await verify_conversation_owner(conv_uuid, user.id)
+    if not is_owner:
+        logger.warning(f"User {user.id} does not own conversation {conversation_id} or it doesn't exist.")
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this conversation.")
+
+    try:
+        # Step 1: Delete associated messages
+        logger.info(f"Deleting messages for conversation {conversation_id}")
+        delete_messages_response = supabase.table("messages") \
+            .delete() \
+            .eq("conversation_id", str(conv_uuid)) \
+            .execute()
+        # Log the data part of the response (should be empty on success)
+        logger.info(f"Messages delete response data: {delete_messages_response.data}")
+
+        # Step 2: Delete the conversation itself
+        logger.info(f"Deleting conversation record {conversation_id}")
+        delete_conv_response = supabase.table("conversations") \
+            .delete() \
+            .eq("id", str(conv_uuid)) \
+            .eq("user_id", str(user.id)) \
+            .execute()
+
+        # Log the data part of the response (should be empty on success)
+        logger.info(f"Conversation delete response data: {delete_conv_response.data}")
+
+        # If execute() did not raise an exception, assume success or record already gone.
+        # Remove the check based on status_code or data presence for delete operations.
+        # if delete_conv_response.status_code not in [200, 204] or (hasattr(delete_conv_response, 'data') and not delete_conv_response.data):
+        #      logger.warning(f"Conversation {conversation_id} could not be deleted or was already gone.")
+             
+        logger.info(f"Successfully deleted conversation {conversation_id} and its messages.")
+        # No content is returned on successful deletion (status code 204)
+
+    except Exception as e:
+        logger.error(f"Error during deletion of conversation {conversation_id}: {e}")
+        # Log the traceback for detailed debugging
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}") 

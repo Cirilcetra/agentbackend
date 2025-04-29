@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Body
+# Import the shared Supabase client
+from app.database import supabase 
 from app.auth import get_current_user, User
 from typing import Optional, Dict, Any
 import logging
 import os
 import io
 import pdfplumber
-from supabase import create_client
+# Remove local Supabase client import
+# from supabase import create_client
 from app.embeddings import add_document_to_vector_db
 import time
 import chromadb
@@ -17,19 +20,19 @@ router = APIRouter()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Supabase client
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase = None
-
-try:
-    if SUPABASE_URL and SUPABASE_KEY:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        logger.info("Supabase client initialized in document routes")
-    else:
-        logger.warning("Missing Supabase environment variables in document routes")
-except Exception as e:
-    logger.error(f"Error initializing Supabase client: {e}")
+# Remove local Supabase client initialization
+# SUPABASE_URL = os.getenv("SUPABASE_URL")
+# SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# supabase = None
+# 
+# try:
+#     if SUPABASE_URL and SUPABASE_KEY:
+#         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+#         logger.info("Supabase client initialized in document routes")
+#     else:
+#         logger.warning("Missing Supabase environment variables in document routes")
+# except Exception as e:
+#     logger.error(f"Error initializing Supabase client: {e}")
 
 # Initialize ChromaDB client connection - reuse the same connection as in embeddings.py
 from app.embeddings import chroma_client, openai_ef

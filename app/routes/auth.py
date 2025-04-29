@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from app.database import supabase
 from app.auth import get_current_user, User
 from pydantic import BaseModel, EmailStr
 import logging
 import os
-from supabase import create_client
 import jwt
 import base64
 
@@ -12,20 +12,6 @@ router = APIRouter()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase = None
-
-try:
-    if SUPABASE_URL and SUPABASE_KEY:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        logger.info("Supabase client initialized in auth routes")
-    else:
-        logger.warning("Missing Supabase environment variables in auth routes")
-except Exception as e:
-    logger.error(f"Error initializing Supabase client: {e}")
 
 class UserResponse(BaseModel):
     id: str
