@@ -1,5 +1,5 @@
 # backend/app/routes/notes.py
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Response
 from typing import List
 import uuid
 import logging
@@ -7,9 +7,9 @@ import traceback
 
 # Ensure these models and functions are correctly imported from your project structure
 from app.models import NoteCreate, NoteRead
-from app.database import get_notes, create_note
+from app.database import get_notes, create_note, delete_note
 from app.auth import get_current_user, User
-from app.embeddings import embed_and_store_notes # Make sure this path is correct
+from app.embeddings import embed_and_store_notes, remove_note_from_vector_db # Add the new import
 
 logger = logging.getLogger(__name__)
 
@@ -80,4 +80,43 @@ async def create_user_note(
         # Provide a more specific detail if possible, otherwise generic
         detail_msg = getattr(e, 'detail', "An unexpected server error occurred")
         status_code = getattr(e, 'status_code', status.HTTP_500_INTERNAL_SERVER_ERROR)
-        raise HTTPException(status_code=status_code, detail=detail_msg) 
+        raise HTTPException(status_code=status_code, detail=detail_msg)
+
+@router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user_note(
+    note_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a note belonging to the current user"""
+    try:
+        # Convert string IDs to UUIDs
+        try:
+            note_uuid = uuid.UUID(note_id)
+            user_uuid = uuid.UUID(current_user.id)
+        except ValueError as ve:
+            logger.error(f"Invalid UUID format: {ve}")
+            raise HTTPException(status_code=400, detail=f"Invalid ID format: {ve}")
+            
+        logger.info(f"Attempting to delete note {note_id} for user {current_user.id}")
+        
+        # Try to delete the note from the database
+        deletion_success = delete_note(note_uuid, user_uuid)
+        
+        if not deletion_success:
+            logger.warning(f"Note {note_id} not found or doesn't belong to user {current_user.id}")
+            raise HTTPException(status_code=404, detail="Note not found or you don't have permission to delete it")
+            
+        # Schedule background task to remove from vector DB
+        background_tasks.add_task(remove_note_from_vector_db, user_uuid, note_uuid)
+        
+        logger.info(f"Successfully deleted note {note_id} for user {current_user.id}")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions without modification
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error deleting note {note_id}: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="An unexpected error occurred") 

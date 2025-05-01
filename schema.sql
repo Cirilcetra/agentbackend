@@ -82,6 +82,50 @@ CREATE TABLE messages (
   is_read BOOLEAN DEFAULT FALSE
 );
 
+-- Create notes table to store user notes
+CREATE TABLE notes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create index for faster note retrieval by user
+CREATE INDEX idx_notes_user_id ON notes(user_id);
+
+-- Enable RLS on notes table
+ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+
+-- Notes table policies
+CREATE POLICY "Users can view their own notes" ON notes
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own notes" ON notes
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own notes" ON notes
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- Function to delete a note (bypassing RLS)
+CREATE OR REPLACE FUNCTION delete_note_privileged(p_note_id UUID, p_user_id UUID)
+RETURNS BOOLEAN
+SECURITY DEFINER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    affected_rows INTEGER;
+BEGIN
+    -- RLS is bypassed due to SECURITY DEFINER
+    DELETE FROM public.notes
+    WHERE id = p_note_id AND user_id = p_user_id
+    RETURNING 1 INTO affected_rows;
+    
+    -- Return true if we deleted a row, false otherwise
+    RETURN affected_rows > 0;
+END;
+$$;
+
 -- Row-level security (RLS) policies
 
 -- Enable RLS on all tables

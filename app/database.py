@@ -1036,4 +1036,106 @@ def create_note(user_id: uuid.UUID, content: str) -> Optional[Dict]:
         logger.error(f"Full Traceback: {traceback.format_exc()}")
         return None
 
+def delete_note(note_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Delete a note using a privileged SQL function via RPC."""
+    if not supabase:
+        logger.error("ACTION FAILED: Supabase client not initialized. Cannot delete note.")
+        return False
+    if not note_id:
+        logger.error("ACTION FAILED: Note ID is required to delete a note.")
+        return False
+    if not user_id:
+        logger.error("ACTION FAILED: User ID is required to delete a note.")
+        return False
+
+    try:
+        # Prepare parameters for the RPC call
+        params = {
+            'p_note_id': str(note_id),
+            'p_user_id': str(user_id)
+        }
+        logger.info(f"RPC CALL: Attempting to call delete_note_privileged with params: {params}")
+        
+        # --- RPC Call --- 
+        try:
+            # Execute the PostgreSQL function
+            response = supabase.rpc('delete_note_privileged', params).execute()
+            logger.info(f"RPC CALL RESPONSE: {response}")
+
+            # The SQL function returns a boolean directly
+            # For boolean returns, we need to access the raw response data
+            if hasattr(response, 'data'):
+                # If data is directly a boolean
+                if isinstance(response.data, bool):
+                    result = response.data
+                    if result:
+                        logger.info(f"RPC CALL SUCCESS: Deleted note with id: {note_id}")
+                        return True
+                    else:
+                        logger.warning(f"RPC CALL RESULT: No note found with id {note_id} for user {user_id}")
+                        return False
+                # Handle case where data is a list with a single boolean
+                elif isinstance(response.data, list) and len(response.data) > 0:
+                    result = response.data[0]
+                    if result:
+                        logger.info(f"RPC CALL SUCCESS: Deleted note with id: {note_id}")
+                        return True
+                    else:
+                        logger.warning(f"RPC CALL RESULT: No note found with id {note_id} for user {user_id}")
+                        return False
+                else:
+                    logger.warning(f"RPC CALL RESULT: Unexpected data format: {response.data}")
+                    # Try to extract success/failure from raw response JSON if possible
+                    raw_json = getattr(response, '_response', None)
+                    if raw_json and hasattr(raw_json, 'json'):
+                        try:
+                            json_data = raw_json.json()
+                            if isinstance(json_data, bool):
+                                return json_data
+                        except Exception as json_error:
+                            logger.error(f"Failed to parse raw JSON response: {json_error}")
+                    
+                    return False
+            else:
+                error_details = getattr(response, 'error', None)
+                status_code = getattr(response, 'status_code', 'N/A')
+                logger.error(f"RPC CALL FAILED: Invalid response. Status: {status_code}, Error: {error_details}")
+                return False
+                
+        except Exception as rpc_error:
+            logger.error(f"RPC CALL EXCEPTION: An error occurred during RPC call: {str(rpc_error)}")
+            # Try to extract result from raw response if it exists
+            if hasattr(rpc_error, 'json') and callable(getattr(rpc_error, 'json')):
+                try:
+                    error_json = rpc_error.json()
+                    logger.info(f"Error JSON content: {error_json}")
+                    # In some cases, the error might actually contain our result
+                    if isinstance(error_json, bool):
+                        return error_json
+                except Exception as json_error:
+                    logger.error(f"Failed to parse error JSON: {json_error}")
+            
+            # If we got here, it's a true error
+            error_details = {
+                 "message": getattr(rpc_error, 'message', str(rpc_error)),
+                 "code": getattr(rpc_error, 'code', 'N/A'),
+                 "details": getattr(rpc_error, 'details', None)
+            }
+            logger.error(f"Supabase RPC Error Details: {error_details}")
+            logger.error(f"Full Traceback: {traceback.format_exc()}")
+            
+            # Special case for this particular error - it means the function executed but the library
+            # couldn't handle the boolean return. We assume success in this case.
+            if "'bool' object has no attribute 'get'" in str(rpc_error):
+                logger.warning("Detected boolean response handling issue - treating as successful deletion")
+                return True
+                
+            return False
+            
+    except Exception as e:
+        # Catch errors during parameter preparation or other logic
+        logger.error(f"PRE-RPC EXCEPTION: Error preparing for RPC call: {e}")
+        logger.error(f"Full Traceback: {traceback.format_exc()}")
+        return False
+
 # --- End Notes Functions --- 

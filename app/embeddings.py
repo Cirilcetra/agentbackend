@@ -348,46 +348,102 @@ def embed_and_store_notes(user_id: uuid.UUID, notes: List[Dict]):
         for note in notes:
             note_id = note.get('id')
             content = note.get('content')
-
+            
             if not note_id or not content:
                 logger.warning(f"EMBEDDING WARNING: Skipping note due to missing ID or content: {note}")
                 continue
-
-            document_text = f"User Note: {content}" # Prefix to distinguish notes
+            
+            # Extract created_at date if available
+            created_at = note.get('created_at')
+            created_date = created_at.split('T')[0] if isinstance(created_at, str) else "unknown date"
+            
+            # Prepare data for ChromaDB
+            # Use a specific prefix to distinguish notes from other text, now including the creation date
+            document_text = f"User Note (created on {created_date}): {content}"
             documents.append(document_text)
-            user_id_str = str(user_id) # Ensure user_id is string for metadata
-            note_id_str = str(note_id) # Ensure note_id is string
             metadatas.append({
-                "category": "note", # Specific category
-                "user_id": user_id_str,
-                "note_id": note_id_str
+                "category": "note", # Specific category for notes
+                "user_id": str(user_id),
+                "note_id": str(note_id),
+                "created_date": created_date # Store creation date in metadata too
             })
-            ids.append(f"note_{user_id_str}_{note_id_str}") # Unique ChromaDB ID
-
-        if not documents:
-            logger.info(f"EMBEDDING INFO: No valid notes found to add for user {user_id} after filtering.")
-            return
-
-        # Log the data being sent to ChromaDB
-        logger.info(f"EMBEDDING INFO: Preparing to add {len(documents)} note(s) to ChromaDB for user {user_id_str}.")
-        # Optional: Log details for debugging (be cautious with sensitive data)
-        # logger.debug(f"EMBEDDING DEBUG: IDs: {ids}")
-        # logger.debug(f"EMBEDDING DEBUG: Metadatas: {metadatas}")
-        # logger.debug(f"EMBEDDING DEBUG: Documents: {documents}")
-
-        # Add/update notes in ChromaDB
-        # Note: .add() with existing IDs acts like an upsert in ChromaDB
-        logger.info(f"EMBEDDING INFO: Calling collection.add() for user {user_id_str}...")
-        collection.add(
-            documents=documents,
-            metadatas=metadatas,
-            ids=ids
-        )
-        logger.info(f"EMBEDDING SUCCESS: Successfully called collection.add() for {len(documents)} notes for user {user_id_str}") # Changed log message
-
+            # Create a unique ID for the ChromaDB entry
+            ids.append(f"note_{user_id}_{note_id}")
+            
+        # Add documents to the collection
+        if documents:
+            collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+            logger.info(f"EMBEDDING INFO: Successfully added/updated {len(documents)} notes in ChromaDB for user {user_id}.")
+            return True
+        else:
+            logger.info(f"EMBEDDING INFO: No valid notes found to embed for user {user_id}.")
+            return False
+            
     except Exception as e:
-        logger.error(f"EMBEDDING ERROR: Failed to embed notes for user {user_id_str}: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"EMBEDDING ERROR: Failed to embed notes for user {user_id}. Error: {e}")
+        return False
+
+def remove_note_from_vector_db(user_id: uuid.UUID, note_id: uuid.UUID) -> bool:
+    """Remove a note from the vector database"""
+    if not user_id:
+        logger.error("User ID is required to remove note from vector DB")
+        return False
+    if not note_id:
+        logger.error("Note ID is required to remove note from vector DB")
+        return False
+        
+    try:
+        # Generate the vector ID (same format used when adding notes)
+        vector_id = f"note_{user_id}_{note_id}"
+        logger.info(f"Attempting to remove note with vector_id: {vector_id}")
+        
+        # Try removing by ID first
+        try:
+            collection_name = "portfolio_data"
+            collection = chroma_client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=openai_ef
+            )
+            
+            collection.delete(ids=[vector_id])
+            logger.info(f"Successfully removed note {note_id} from vector DB by ID")
+            return True
+        except Exception as id_delete_error:
+            logger.warning(f"Failed to remove note by ID, trying query-based removal: {id_delete_error}")
+            
+        # If ID-based removal fails, try with a filter
+        try:
+            # Create filter to find the specific note
+            where_filter = {
+                "$and": [
+                    {"category": {"$eq": "note"}},
+                    {"user_id": {"$eq": str(user_id)}},
+                    {"note_id": {"$eq": str(note_id)}}
+                ]
+            }
+            
+            collection_name = "portfolio_data"
+            collection = chroma_client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=openai_ef
+            )
+            
+            # Use a query to find and delete the entry
+            collection.delete(where=where_filter)
+            logger.info(f"Successfully removed note {note_id} from vector DB using filters")
+            return True
+        except Exception as filter_delete_error:
+            logger.error(f"Failed to remove note using filters: {filter_delete_error}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error removing note from vector DB: {e}")
+        logger.error(traceback.format_exc())
+        return False
 
 def query_vector_db(query, n_results=8, user_id=None, visitor_id=None, include_conversation=True):
     """
@@ -574,10 +630,14 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
                         else:
                             context_entry = f"Document Info ({subcategory}): {doc}"
                     elif category == "note":
-                        note_content = doc
-                        if isinstance(doc, str) and doc.startswith("User Note: "):
-                             note_content = doc[len("User Note: "):].strip()
-                        context_entry = note_content
+                        # Preserve date information from vector DB when available
+                        # The note is already formatted as "User Note (created on DATE): content" from embed_and_store_notes
+                        if isinstance(doc, str) and "User Note (created on " in doc:
+                             context_entry = doc # Use the full string including the date prefix
+                        elif isinstance(doc, str): # Fallback if format is unexpected
+                             context_entry = f"User Note: {doc}" # Or just use the doc as is
+                        else:
+                             context_entry = str(doc) # Ensure it's a string
                     elif category == "conversation":
                          context_entry = doc
                     elif category == "profile":
@@ -703,6 +763,7 @@ async def generate_ai_response(message: str, search_results: dict, profile_data:
         5. If asked to schedule a meeting, provide the Calendly link if available and mention the meeting rules. If no link is available, suggest discussing meeting availability.
         6. If asked about something outside the provided profile, context, or notes, politely state that you don't have that specific information available right now.
         {doc_instructions}
+        7. For any notes containing time references (like 'tomorrow', 'next week', etc.), interpret them relative to when they were created, not the current date. For example, a note created on 2023-05-01 saying 'tomorrow' refers to 2023-05-02.
 
         Recent conversation history:
         {format_conversation_history(chat_history)}
