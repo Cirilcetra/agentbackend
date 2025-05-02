@@ -76,7 +76,7 @@ class ChatbotModel(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     name: str
-    slug: Optional[str] = None
+    public_url_slug: Optional[str] = None
     description: Optional[str] = None
     configuration: Optional[Dict[str, Any]] = None
     is_public: bool = True
@@ -94,6 +94,7 @@ class ChatbotUpdateRequest(BaseModel):
     Only includes fields that should be updatable via this endpoint.
     """
     configuration: Optional[Dict[str, Any]] = Field(None, description="Configuration options for the chatbot")
+    public_url_slug: Optional[str] = Field(None, description="Custom URL slug for public access")
     # Add other fields like name, description if they should be updatable here
     # name: Optional[str] = None
     # description: Optional[str] = None

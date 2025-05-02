@@ -341,7 +341,7 @@ def get_user_chatbots(user_id: str) -> List[Dict]:
         logger.error(traceback.format_exc())
         return []
 
-def update_chatbot_config(chatbot_id: str, configuration: Dict, user_id: str) -> Optional[Dict]:
+def update_chatbot_config(chatbot_id: str, configuration: Dict, user_id: str, public_url_slug: Optional[str] = None) -> Optional[Dict]:
     """Update the configuration for a specific chatbot ID, ensuring the user owns it."""
     if not supabase:
         logger.error("Cannot update chatbot config - Supabase not connected.")
@@ -349,18 +349,27 @@ def update_chatbot_config(chatbot_id: str, configuration: Dict, user_id: str) ->
 
     try:
         logger.info(f"Updating configuration for chatbot_id: {chatbot_id} by user_id: {user_id}")
+        
+        # Prepare the update data
+        update_data = {
+            "configuration": configuration,
+            "updated_at": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        }
+        
+        # Add public_url_slug to update data if provided
+        if public_url_slug is not None:
+            logger.info(f"Setting public_url_slug to: {public_url_slug}")
+            update_data["public_url_slug"] = public_url_slug
+        
         # Update the specific chatbot owned by the user
         response = supabase.table("chatbots") \
-            .update({
-                "configuration": configuration,
-                "updated_at": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-            }) \
+            .update(update_data) \
             .eq("id", chatbot_id) \
             .eq("user_id", user_id) \
             .execute()
 
         if response.data:
-            logger.info(f"Successfully updated config for chatbot {chatbot_id}: {response.data[0]}")
+            logger.info(f"Successfully updated chatbot {chatbot_id}: {response.data[0]}")
             updated_bot = response.data[0]
             # Ensure configuration is dict
             if not isinstance(updated_bot.get('configuration'), dict):

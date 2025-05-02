@@ -352,7 +352,7 @@ async def get_chatbots(current_user: User = Depends(get_current_user)):
 @router.put("/chatbots/{chatbot_id}", response_model=models.ChatbotModel)
 async def update_chatbot(
     chatbot_id: str,
-    update_data: models.ChatbotUpdateRequest, # Use the new model
+    update_data: models.ChatbotUpdateRequest,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -361,27 +361,32 @@ async def update_chatbot(
     """
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
-
+        
     # Assuming update_data.configuration holds the settings dictionary
     if update_data.configuration is None:
          raise HTTPException(status_code=400, detail="Configuration data is required for update.")
-
+         
     try:
         logger.info(f"Attempting to update chatbot {chatbot_id} for user {current_user.id}")
-
+        
+        # Log the public_url_slug if provided
+        if update_data.public_url_slug is not None:
+            logger.info(f"Received public_url_slug update: {update_data.public_url_slug}")
+        
         updated_chatbot = update_chatbot_config(
             chatbot_id=chatbot_id,
             configuration=update_data.configuration,
-            user_id=current_user.id
+            user_id=current_user.id,
+            public_url_slug=update_data.public_url_slug
         )
-
+        
         if updated_chatbot:
             return updated_chatbot
         else:
             # Check if chatbot exists but belongs to another user or if update failed
             # You might want more specific error handling based on update_chatbot_config return
             raise HTTPException(status_code=404, detail=f"Chatbot not found or update failed for ID: {chatbot_id}")
-
+            
     except Exception as e:
         logger.error(f"Error updating chatbot {chatbot_id}: {e}")
         logger.error(traceback.format_exc())
