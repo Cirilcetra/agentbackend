@@ -682,4 +682,51 @@ async def get_public_chat_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get public chat history: {str(e)}"
+        )
+
+# NEW ROUTE FOR PUBLIC SLUG LOOKUP
+@router.get("/chatbots/public/{slug}", response_model=models.ChatbotModel)
+async def get_public_chatbot_by_slug(slug: str):
+    """
+    Get a chatbot by its public URL slug (no authentication required)
+    """
+    try:
+        logger.info(f"Attempting to fetch public chatbot by slug: {slug}")
+        # Use the existing database function to find by slug
+        chatbot = get_or_create_chatbot(slug=slug) 
+        
+        # Explicitly check if chatbot is None or empty
+        if not chatbot or not isinstance(chatbot, dict) or not chatbot.get("id"):
+            logger.warning(f"No chatbot found for public slug: {slug}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No chatbot found with the slug: {slug}"
+            )
+        
+        # Ensure it's marked as public (important security check)
+        if not chatbot.get("is_public", False): # Default to False if not set
+            logger.warning(f"Chatbot found by slug {slug}, but it's not public.")
+            raise HTTPException(
+                status_code=403,
+                detail="This chatbot is not publicly accessible"
+            )
+        
+        logger.info(f"Successfully found public chatbot by slug {slug}: {chatbot.get('id')}")
+        # Ensure configuration is a dict, default to empty if null/invalid
+        if not isinstance(chatbot.get('configuration'), dict):
+            chatbot['configuration'] = {}
+            
+        # Validate and return using the ChatbotModel
+        return chatbot
+        
+    except HTTPException as he:
+        # Re-raise HTTP exceptions directly
+        raise he
+    except Exception as e:
+        logger.error(f"Error getting public chatbot by slug {slug}: {e}")
+        logger.error(traceback.format_exc())
+        # Return a 404 for any unhandled errors since it's a slug lookup
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not find chatbot with slug: {slug}"
         ) 

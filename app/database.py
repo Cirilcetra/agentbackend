@@ -390,6 +390,7 @@ def update_chatbot_config(chatbot_id: str, configuration: Dict, user_id: str, pu
 def get_or_create_chatbot(user_id=None, chatbot_id=None, slug=None):
     """
     Get an existing chatbot or create a default one
+    When using slug parameter, will only get (not create) a chatbot
     """
     try:
         if not supabase:
@@ -402,10 +403,15 @@ def get_or_create_chatbot(user_id=None, chatbot_id=None, slug=None):
                 return response.data[0]
         
         if slug:
-            # Get chatbot by slug
+            # Get chatbot by slug - this ONLY gets, doesn't create
+            logger.info(f"Looking up chatbot by slug: {slug}")
             response = supabase.table("chatbots").select("*").eq("public_url_slug", slug).execute()
             if response.data and len(response.data) > 0:
+                logger.info(f"Found chatbot with id {response.data[0].get('id')} for slug: {slug}")
                 return response.data[0]
+            else:
+                logger.warning(f"No chatbot found with slug: {slug}")
+                return None
         
         if user_id:
             # Get user's default chatbot or create one

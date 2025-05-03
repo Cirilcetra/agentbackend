@@ -78,6 +78,10 @@ app = FastAPI()
 # Authentication middleware
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Allow OPTIONS requests to pass through for CORS preflight
+        if request.method == "OPTIONS":
+            return await call_next(request)
+            
         # Public paths that don't require authentication
         public_paths = [
             r"^/$",                      # Root path
@@ -93,6 +97,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             r"^/check-chat",             # Chat status check
             r"^/chat$",                  # Main chat endpoint
             r"^/chat/history",           # Chat history endpoint
+            r"^/chatbots/public/[^/]+$", # Public chatbot access by slug
         ]
         
         # Check if the current path is in the public paths
@@ -114,7 +119,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 # Add middleware
-app.add_middleware(AuthMiddleware)
 
 # Add CORS middleware
 allowed_origins = [
@@ -134,11 +138,13 @@ if cors_origins_env:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"], # Changed to allow all origins temporarily
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+app.add_middleware(AuthMiddleware)
 
 # Include routers from the routes directory
 app.include_router(chatbot.router, prefix="/chat", tags=["chatbot"])
