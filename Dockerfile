@@ -17,4 +17,4 @@ RUN echo "Assigned PORT inside container build: $PORT"
 # Railway uses the PORT env var, so EXPOSE might be irrelevant or potentially confusing
 
 # Command to run the application
-CMD ["/bin/sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"] 
+CMD /bin/sh -c "uvicorn app.main:app --host 0.0.0.0 --port $PORT" 
