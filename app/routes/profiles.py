@@ -21,11 +21,14 @@ async def get_profile(user_id: Optional[str] = Query(None, description="Specific
         if not profile_data:
             # Return a default profile if none exists
             return models.ProfileData(
-                bio="No bio available yet.",
-                skills="No skills listed yet.",
-                experience="No experience listed yet.",
+                name="Your Name",
+                location="City, Country",
+                calendly_link="https://calendly.com/your-link",
+                bio="Tell us a bit about yourself.",
+                skills="Skill 1, Skill 2, Skill 3",
+                experience="Describe your experience here.",
                 projects="No projects listed yet.",
-                interests="No interests listed yet."
+                interests="Hobby 1, Hobby 2, Hobby 3"
             )
         return models.ProfileData(**profile_data)
     
