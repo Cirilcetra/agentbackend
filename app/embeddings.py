@@ -23,11 +23,27 @@ if not openai.api_key:
 # Set up ChromaDB client
 # Use persistent storage instead of in-memory
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+
 # Ensure the directory exists
-os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+try:
+    os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+except OSError as e:
+    if e.errno == 30:  # Read-only file system
+        print(f"Warning: Could not create directory {CHROMA_DB_PATH} - read-only filesystem. This is expected in some environments.")
+    else:
+        raise e
+
 # Use persistent storage rather than in-memory
-chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-print(f"ChromaDB client initialized with persistent storage at: {CHROMA_DB_PATH}")
+try:
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    print(f"ChromaDB client initialized with persistent storage at: {CHROMA_DB_PATH}")
+except Exception as e:
+    print(f"Warning: Failed to initialize ChromaDB with persistent storage: {e}")
+    print("Falling back to in-memory storage")
+    chroma_client = chromadb.Client()
+
+# Initialize combined_instructions variable
+combined_instructions = ""
 
 # Create embedding function using OpenAI embeddings
 # Use a custom embedding function compatible with OpenAI v1.x

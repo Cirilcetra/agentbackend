@@ -11,6 +11,7 @@ from app.database import get_profile_data, update_profile_data, log_chat_message
 from app.embeddings import add_profile_to_vector_db, query_vector_db, generate_ai_response, add_conversation_to_vector_db
 from app.routes import chatbot, profiles, admin, documents, chatbot as chatbot_routes
 from app.routes import notes
+from app.routes import transcribe
 import time
 import openai
 from dotenv import load_dotenv
@@ -159,6 +160,7 @@ except NameError:
 # Add the chatbot routes
 app.include_router(chatbot_routes.router)
 app.include_router(notes.router)
+app.include_router(transcribe.router, prefix="/api", tags=["transcription"])
 
 # Define models
 class ProfileData(BaseModel):
